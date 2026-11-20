@@ -6,6 +6,9 @@ Das Script ermöglicht eine umfangreiche statistische Auswertung der eigenen Geb
 
 Das Dashboard ist ein privates Projekt, das mithilfe künstlicher Intelligenz (OpenAI ChatGPT) nach meinen persönlichen Anforderungen und Vorgaben erstellt wurde.
 
+<img width="2403" height="1228" alt="Screenshot 2026-11-20 174151" src="https://github.com/user-attachments/assets/3bc203b0-31c8-4578-b12a-63e0f6334578" />
+
+
 ## ✨ Funktionen
 
 ### 🏢 Gebäudeübersicht
@@ -16,6 +19,8 @@ Das Dashboard ist ein privates Projekt, das mithilfe künstlicher Intelligenz (O
 - Interaktive Kreisdiagramme für Feuerwehr, Rettungsdienst, Polizei und THW
 - Umschaltung zwischen absoluten und relativen Werten
 
+<img width="2404" height="1226" alt="Screenshot 2026-11-20 175124" src="https://github.com/user-attachments/assets/3d406afb-bf73-423b-a058-750d4ea8716d" />
+
 ### 🚒 Fahrzeugübersicht
 - Gesamtanzahl aller Fahrzeuge
 - Aufschlüsselung nach Fahrzeugtypen
@@ -24,6 +29,9 @@ Das Dashboard ist ein privates Projekt, das mithilfe künstlicher Intelligenz (O
 - Anzeige des FMS-Status zum Zeitpunkt der Datenerfassung
 - Anzeige der zugehörigen Wache
 - Direktlinks zu Fahrzeugen und Gebäuden
+
+<img width="2405" height="1233" alt="Screenshot 2026-11-20 175212" src="https://github.com/user-attachments/assets/b77e09c9-3f39-4e35-8e2a-8296897b553b" />
+<img width="2403" height="1231" alt="Screenshot 2026-11-20 175230" src="https://github.com/user-attachments/assets/b4fe9791-5355-4690-8525-a431a4e37da8" />
 
 ### 🛠️ Erweiterungsstatistik
 - Auflistung gekaufter Erweiterungen
@@ -34,6 +42,9 @@ Das Dashboard ist ein privates Projekt, das mithilfe künstlicher Intelligenz (O
 - Anzeige des jeweiligen Erweiterungsstatus
 - Filterung nach Leitstellenbereichen
 
+<img width="2403" height="1229" alt="Screenshot 2026-11-20 175408" src="https://github.com/user-attachments/assets/773ba51d-15dc-4eac-be8d-ef10026b6fca" />
+<img width="2413" height="1232" alt="Screenshot 2026-11-20 175418" src="https://github.com/user-attachments/assets/6ab09879-89b1-45fc-a203-86bdb577cbdf" />
+
 ### 📍 Weitere Funktionen
 - Auswertung einzelner Wachen und ihrer Fahrzeugbestände
 - Statistiken nach Leitstellenbereichen
@@ -43,6 +54,9 @@ Das Dashboard ist ein privates Projekt, das mithilfe künstlicher Intelligenz (O
 - Manuelles Aktualisieren der Statistiken
 - Automatische Anpassung an das im Leitstellenspiel gewählte Hell- oder Dunkeldesign
 - Rote Akzente in Anlehnung an das Leitstellenspiel
+
+<img width="2402" height="1232" alt="Screenshot 2026-11-20 175534" src="https://github.com/user-attachments/assets/d3a2e4bc-d6c9-495d-b4d0-4a534bb49676" />
+<img width="2404" height="1228" alt="Screenshot 2026-11-20 175548" src="https://github.com/user-attachments/assets/0f9fc7b2-4f05-4bd0-9a01-d7f1d1afb197" />
 
 ## 📥 Installation
 
