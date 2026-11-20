@@ -11,6 +11,8 @@
 // @grant        GM_xmlhttpRequest
 // @connect      api.lss-manager.de
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/cpu99/Leitstellenspiel/main/LSS-Statistik-Dashboard.user.js
+// @downloadURL  https://raw.githubusercontent.com/cpu99/Leitstellenspiel/main/LSS-Statistik-Dashboard.user.js
 // ==/UserScript==
 
 /*
