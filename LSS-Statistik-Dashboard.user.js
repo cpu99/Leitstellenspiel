@@ -6,8 +6,8 @@
 // @author       cpu99 x ChatGPT
 // @description  Gebäude, Kleinwachen, Fahrzeuge, Diagramme und Erweiterungen
 // @namespace    local.lss.statistics
-// @match        https://www.leitstellenspiel.de/*
-// @match        https://leitstellenspiel.de/*
+// @match        https://www.leitstellenspiel.de/
+// @match        https://leitstellenspiel.de/
 // @grant        GM_xmlhttpRequest
 // @connect      api.lss-manager.de
 // @run-at       document-idle
@@ -258,19 +258,23 @@
     // ==========================================
 
     const css = `
+   /* Statistik-Button in der oberen Navigationsleiste */
    #lssstat-launcher {
-     position:fixed!important;
-     left:18px!important;
-     bottom:18px!important;
-     z-index:2147483600!important;
-     background:#b8242e!important;
-     color:#fff!important;
-     border:1px solid #ef6d74!important;
-     border-radius:10px!important;
-     padding:12px 17px!important;
-     font:700 14px system-ui!important;
-     cursor:pointer!important;
-     box-shadow:0 6px 24px #0008!important;
+    position: static !important;
+    display: block !important;
+    background: transparent !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 15px !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    font: 14px system-ui, sans-serif !important;
+    cursor: pointer !important;
+   }
+
+   #lssstat-launcher:hover {
+    background: rgba(0, 0, 0, 0.15) !important;
    }
 
    #lssstat-root {
@@ -638,12 +642,46 @@
     // BENUTZEROBERFLÄCHE
     // ==========================================
 
+    // ==========================================
+    // STATISTIK-BUTTON IN DER NAVIGATIONSLEISTE
+    // ==========================================
+
     const launcher = document.createElement('button');
 
     launcher.id = 'lssstat-launcher';
+    launcher.type = 'button';
     launcher.textContent = '📊 Statistik';
 
-    document.body.append(launcher);
+    // Navigationsleiste suchen
+    const navbar = document.querySelector(
+        '#navbar-main-collapse > ul'
+    );
+
+    if (navbar) {
+        // Listenelement erstellen
+        const listItem = document.createElement('li');
+
+        listItem.id = 'lssstat-nav-item';
+        listItem.appendChild(launcher);
+
+        // Button in die Navigationsleiste einfügen
+        navbar.appendChild(listItem);
+
+    } else {
+        // Fallback, falls sich die Website-Struktur ändert
+        console.warn(
+            '[LSS Statistik] Navigationsleiste nicht gefunden.'
+        );
+
+        // Button weiterhin erreichbar halten
+        launcher.style.position = 'fixed';
+        launcher.style.left = '18px';
+        launcher.style.bottom = '18px';
+        launcher.style.zIndex = '2147483600';
+        launcher.style.background = '#b8242e';
+
+        document.body.appendChild(launcher);
+    }
 
     const root = document.createElement('section');
 
@@ -2227,51 +2265,51 @@
          </p>
        `;
 
-         } else if (state.tab === 'extensions') {
-             html += renderExtensions();
+        } else if (state.tab === 'extensions') {
+            html += renderExtensions();
 
-         } else {
-             if (
-                 ['buildingtypes', 'vehicletypes'].includes(
-                     state.tab
-                 )
-             ) {
-                 html += chartControls();
-             }
+        } else {
+            if (
+                ['buildingtypes', 'vehicletypes'].includes(
+                    state.tab
+                )
+            ) {
+                html += chartControls();
+            }
 
-             let rows = [];
+            let rows = [];
 
-             if (state.tab === 'buildingtypes') {
-                 rows = familyRows();
-             }
+            if (state.tab === 'buildingtypes') {
+                rows = familyRows();
+            }
 
-             if (state.tab === 'vehicletypes') {
-                 rows = vehicleRows();
-             }
+            if (state.tab === 'vehicletypes') {
+                rows = vehicleRows();
+            }
 
-             if (state.tab === 'stations') {
-                 rows = d.stations
-                     .map(s => ({
-                     ...s,
-                     count: s.vehicles
-                 }))
-                     .sort((a, b) => b.count - a.count);
-             }
+            if (state.tab === 'stations') {
+                rows = d.stations
+                    .map(s => ({
+                    ...s,
+                    count: s.vehicles
+                }))
+                    .sort((a, b) => b.count - a.count);
+            }
 
-             if (state.tab === 'centers') {
-                 rows = d.centers
-                     .map(c => ({
-                     ...c,
-                     count: c.vehicles
-                 }))
-                     .sort((a, b) => b.count - a.count);
-             }
+            if (state.tab === 'centers') {
+                rows = d.centers
+                    .map(c => ({
+                    ...c,
+                    count: c.vehicles
+                }))
+                    .sort((a, b) => b.count - a.count);
+            }
 
-             rows = filtered(rows);
+            rows = filtered(rows);
 
-             const { controls, page } = paged(rows);
+            const { controls, page } = paged(rows);
 
-             html += `
+            html += `
          <div class="notice">
            ${fmt(rows.length)} Einträge ·
            ${PAGE_ROWS} pro Seite ·
@@ -2280,22 +2318,22 @@
          </div>
        `;
 
-           // Gebäudetypen
-           if (state.tab === 'buildingtypes') {
-               const body = [];
+             // Gebäudetypen
+             if (state.tab === 'buildingtypes') {
+                 const body = [];
 
-               for (const r of page) {
-                   const toggle = [
-                       'fire',
-                       'rescue',
-                       'police'
-                   ].includes(r.key);
+                 for (const r of page) {
+                     const toggle = [
+                         'fire',
+                         'rescue',
+                         'police'
+                     ].includes(r.key);
 
-                   const open = state.openBuildings.has(
-                       r.key
-                   );
+                     const open = state.openBuildings.has(
+                         r.key
+                     );
 
-                   body.push(`
+                     body.push(`
              <tr>
                <td>
                  ${toggle ? `
@@ -2315,8 +2353,8 @@
              </tr>
            `);
 
-                 if (toggle && open) {
-                     body.push(`
+                   if (toggle && open) {
+                       body.push(`
                <tr class="subrow">
                  <td class="indent">
                    ↳ ${esc(r.name)} (normal)
@@ -2340,20 +2378,20 @@
                </tr>
              `);
                  }
-             }
+               }
 
-             html += table([
-                 ['Gebäudetyp'],
-                 ['Anzahl', true]
-             ], body.join(''));
-         }
-
-           // Fahrzeugtypen
-           if (state.tab === 'vehicletypes') {
                html += table([
-                   ['Fahrzeugtyp'],
+                   ['Gebäudetyp'],
                    ['Anzahl', true]
-               ], page.map(r => `
+               ], body.join(''));
+           }
+
+             // Fahrzeugtypen
+             if (state.tab === 'vehicletypes') {
+                 html += table([
+                     ['Fahrzeugtyp'],
+                     ['Anzahl', true]
+                 ], page.map(r => `
            <tr>
              <td>
                <button
@@ -2367,17 +2405,17 @@
              </td>
            </tr>
          `).join(''));
-         }
+           }
 
-           // Einzelne Wachen
-           if (state.tab === 'stations') {
-               html += table([
-                   ['Wache'],
-                   ['Gebäudetyp'],
-                   ['Organisation'],
-                   ['Fahrzeuge', true],
-                   ['Zusammensetzung']
-               ], page.map(r => `
+             // Einzelne Wachen
+             if (state.tab === 'stations') {
+                 html += table([
+                     ['Wache'],
+                     ['Gebäudetyp'],
+                     ['Organisation'],
+                     ['Fahrzeuge', true],
+                     ['Zusammensetzung']
+                 ], page.map(r => `
            <tr>
              <td>
                ${buildingLink(r)}
@@ -2403,21 +2441,21 @@
              </td>
            </tr>
          `).join(''));
-         }
+           }
 
-           // Leitstellenbereiche
-           if (state.tab === 'centers') {
-               html += table([
-                   ['Leitstellenbereich'],
-                   ['Gebäude', true],
-                   ['Fahrzeuge', true],
-                   ['Zusammensetzung']
-               ], page.map(r => `
+             // Leitstellenbereiche
+             if (state.tab === 'centers') {
+                 html += table([
+                     ['Leitstellenbereich'],
+                     ['Gebäude', true],
+                     ['Fahrzeuge', true],
+                     ['Zusammensetzung']
+                 ], page.map(r => `
            <tr>
              <td>
                ${r.id === 'ohne'
-                         ? esc(r.name)
-                         : `
+                           ? esc(r.name)
+                           : `
                    <a
                      href="/buildings/${encodeURIComponent(r.id)}"
                      target="_blank"
@@ -2440,10 +2478,10 @@
              </td>
            </tr>
          `).join(''));
-         }
+           }
 
-           html += controls;
-       }
+             html += controls;
+         }
 
         content.innerHTML = html;
 
