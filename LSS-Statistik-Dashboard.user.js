@@ -126,25 +126,6 @@
     ? 'Aktiv'
     : 'Deaktiviert';
 
-    // ==========================================
-    // AUTOMATISCHE DESIGN-ERKENNUNG
-    // ==========================================
-
-    const DESIGN = {
-        0: 'light',
-        1: 'dark',
-        2: 'light',
-        3: 'light',
-        4: 'dark',
-        5: 'auto'
-    };
-
-    const systemTheme = matchMedia(
-        '(prefers-color-scheme: dark)'
-    );
-
-    let designMode = 0;
-
     const state = {
         data: null,
         tab: 'overview',
@@ -742,56 +723,15 @@
     };
 
     const theme = () => {
-        root.dataset.theme = designMode === 5
-            ? (systemTheme.matches ? 'dark' : 'light')
-        : (DESIGN[designMode] || 'dark');
+        root.dataset.theme = document.body.classList.contains('dark')
+            ? 'dark'
+        : 'light';
     };
 
-    async function updateTheme() {
-        try {
-            const r = await fetch('/api/settings', {
-                credentials: 'same-origin',
-                cache: 'no-store'
-            });
-
-            if (!r.ok) throw Error('HTTP ' + r.status);
-
-            const value = Number(
-                (await r.json()).design_mode
-            );
-
-            if (
-                !Object.prototype.hasOwnProperty.call(
-                    DESIGN, value
-                )
-            ) {
-                throw Error('Unbekanntes Design');
-            }
-
-            designMode = value;
-            theme();
-
-        } catch (e) {
-            console.warn(
-                '[LSS Statistik] Design:',
-                e
-            );
-        }
-    }
-
-    systemTheme.addEventListener('change', () => {
-        if (designMode === 5) theme();
-    });
-
     launcher.onclick = () => {
+        theme();
         root.style.display = 'flex';
-
-        if (!root.dataset.theme) {
-            root.dataset.theme = 'dark';
-        }
-
         render();
-        updateTheme();
     };
 
     $('#lssstat-close').onclick = () => {
@@ -2318,22 +2258,22 @@
          </div>
        `;
 
-             // Gebäudetypen
-             if (state.tab === 'buildingtypes') {
-                 const body = [];
+            // Gebäudetypen
+            if (state.tab === 'buildingtypes') {
+                const body = [];
 
-                 for (const r of page) {
-                     const toggle = [
-                         'fire',
-                         'rescue',
-                         'police'
-                     ].includes(r.key);
+                for (const r of page) {
+                    const toggle = [
+                        'fire',
+                        'rescue',
+                        'police'
+                    ].includes(r.key);
 
-                     const open = state.openBuildings.has(
-                         r.key
-                     );
+                    const open = state.openBuildings.has(
+                        r.key
+                    );
 
-                     body.push(`
+                    body.push(`
              <tr>
                <td>
                  ${toggle ? `
@@ -2353,8 +2293,8 @@
              </tr>
            `);
 
-                   if (toggle && open) {
-                       body.push(`
+                     if (toggle && open) {
+                         body.push(`
                <tr class="subrow">
                  <td class="indent">
                    ↳ ${esc(r.name)} (normal)
@@ -2366,7 +2306,7 @@
                </tr>
              `);
 
-                     body.push(`
+                       body.push(`
                <tr class="subrow">
                  <td class="indent">
                    ↳ ${esc(r.name)} (Kleinwache)
@@ -2377,21 +2317,21 @@
                  </td>
                </tr>
              `);
+                   }
                  }
-               }
 
-               html += table([
-                   ['Gebäudetyp'],
-                   ['Anzahl', true]
-               ], body.join(''));
-           }
-
-             // Fahrzeugtypen
-             if (state.tab === 'vehicletypes') {
                  html += table([
-                     ['Fahrzeugtyp'],
+                     ['Gebäudetyp'],
                      ['Anzahl', true]
-                 ], page.map(r => `
+                 ], body.join(''));
+             }
+
+            // Fahrzeugtypen
+            if (state.tab === 'vehicletypes') {
+                html += table([
+                    ['Fahrzeugtyp'],
+                    ['Anzahl', true]
+                ], page.map(r => `
            <tr>
              <td>
                <button
@@ -2405,17 +2345,17 @@
              </td>
            </tr>
          `).join(''));
-           }
+             }
 
-             // Einzelne Wachen
-             if (state.tab === 'stations') {
-                 html += table([
-                     ['Wache'],
-                     ['Gebäudetyp'],
-                     ['Organisation'],
-                     ['Fahrzeuge', true],
-                     ['Zusammensetzung']
-                 ], page.map(r => `
+            // Einzelne Wachen
+            if (state.tab === 'stations') {
+                html += table([
+                    ['Wache'],
+                    ['Gebäudetyp'],
+                    ['Organisation'],
+                    ['Fahrzeuge', true],
+                    ['Zusammensetzung']
+                ], page.map(r => `
            <tr>
              <td>
                ${buildingLink(r)}
@@ -2441,21 +2381,21 @@
              </td>
            </tr>
          `).join(''));
-           }
+             }
 
-             // Leitstellenbereiche
-             if (state.tab === 'centers') {
-                 html += table([
-                     ['Leitstellenbereich'],
-                     ['Gebäude', true],
-                     ['Fahrzeuge', true],
-                     ['Zusammensetzung']
-                 ], page.map(r => `
+            // Leitstellenbereiche
+            if (state.tab === 'centers') {
+                html += table([
+                    ['Leitstellenbereich'],
+                    ['Gebäude', true],
+                    ['Fahrzeuge', true],
+                    ['Zusammensetzung']
+                ], page.map(r => `
            <tr>
              <td>
                ${r.id === 'ohne'
-                           ? esc(r.name)
-                           : `
+                             ? esc(r.name)
+                             : `
                    <a
                      href="/buildings/${encodeURIComponent(r.id)}"
                      target="_blank"
@@ -2478,10 +2418,10 @@
              </td>
            </tr>
          `).join(''));
-           }
+             }
 
-             html += controls;
-         }
+            html += controls;
+        }
 
         content.innerHTML = html;
 
