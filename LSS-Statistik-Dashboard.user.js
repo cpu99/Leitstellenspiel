@@ -2,9 +2,9 @@
 // ==UserScript==
 // @name         LSS Statistik-Dashboard
 // @license      MIT
-// @version      2.3.1
+// @version      2.5.0
 // @author       cpu99 x ChatGPT
-// @description  Gebäude, Kleinwachen, Fahrzeuge, Diagramme und Erweiterungen
+// @description  Statistik-Dashboard und Fahrzeug- & Gebäudemanager mit Statusverwaltung, Filtern und Diagrammen
 // @namespace    local.lss.statistics
 // @match        https://www.leitstellenspiel.de/
 // @match        https://leitstellenspiel.de/
@@ -109,7 +109,13 @@
         stopWrite: false,
         writeNeedsRefresh: false,
         writeLog: [],
-        pending: null
+        pending: null,
+        detailStatus: 'all',
+        detailSort: 'name',
+        buildingCenter: 'all',
+        buildingStatus: 'all',
+        buildingSize: 'all',
+        buildingBulkPending: null
     };
 
     const fmt = n =>
@@ -291,6 +297,68 @@
    cursor:pointer!important;
    font-weight:600!important;
  }
+ #lssstat-root button.lssstat-detail-btn {
+    min-height: 26px !important;
+    padding: 3px 9px !important;
+    margin-left: 12px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    color: var(--muted) !important;
+    background: var(--panel) !important;
+    border: 1px solid var(--line) !important;
+}
+
+#lssstat-root button.lssstat-detail-btn:hover {
+    color: var(--text) !important;
+    border-color: var(--link) !important;
+}
+
+  /* ==========================================
+     STATUSBUTTONS – AKTIV / INAKTIV
+     ========================================== */
+
+  #lssstat-root button.lssstat-status-active {
+    background: rgba(63, 142, 106, 0.18) !important;
+    border: 1px solid rgba(95, 170, 130, 0.48) !important;
+    color: #91d5aa !important;
+    font-weight: 600 !important;
+    min-width: 92px !important;
+    transition: background .15s ease, border-color .15s ease !important;
+  }
+
+  #lssstat-root button.lssstat-status-inactive {
+    background: rgba(184, 91, 94, 0.18) !important;
+    border: 1px solid rgba(200, 110, 115, 0.48) !important;
+    color: #eba0a4 !important;
+    font-weight: 600 !important;
+    min-width: 92px !important;
+    transition: background .15s ease, border-color .15s ease !important;
+  }
+
+  #lssstat-root button.lssstat-status-active:hover:not(:disabled) {
+    background: rgba(63, 142, 106, 0.30) !important;
+    border-color: #73b791 !important;
+  }
+
+  #lssstat-root button.lssstat-status-inactive:hover:not(:disabled) {
+    background: rgba(184, 91, 94, 0.30) !important;
+    border-color: #d18b90 !important;
+  }
+
+  /* Angepasste Farben für den Light Mode */
+
+  #lssstat-root[data-theme=light] button.lssstat-status-active {
+    background: #e1f1e7 !important;
+    border-color: #a5cbb3 !important;
+    color: #276b46 !important;
+  }
+
+  #lssstat-root[data-theme=light] button.lssstat-status-inactive {
+    background: #f8e6e7 !important;
+    border-color: #dbafb2 !important;
+    color: #97454c !important;
+  }
+
 
  #lssstat-root button:disabled {
    opacity:.42!important;
@@ -1325,35 +1393,76 @@
    `;
     }
 
+
     function pager(n) {
-        const pages = Math.max(
+        const total = Math.max(
             1,
             Math.ceil(n / PAGE_ROWS)
         );
 
         state.page = Math.max(
             0,
-            Math.min(state.page, pages - 1)
+            Math.min(state.page, total - 1)
         );
 
+        const current = state.page + 1;
+
+        // Möglichst zwei Seiten vor und nach
+        // der aktuellen Seite anzeigen.
+        const start = Math.max(
+            1,
+            Math.min(current - 2, total - 4)
+        );
+
+        const end = Math.min(total, start + 4);
+
+        const numberButton = page => `
+        <button
+            data-page="${page - 1}"
+            class="${page === current ? 'primary' : ''}"
+            ${page === current ? 'disabled' : ''}
+        >${page}</button>
+    `;
+
+        let numbers = '';
+
+        if (start > 1) {
+            numbers += numberButton(1);
+
+            if (start > 2) {
+                numbers += '<span class="muted">…</span>';
+            }
+        }
+
+        for (let page = start; page <= end; page++) {
+            numbers += numberButton(page);
+        }
+
+        if (end < total) {
+            if (end < total - 1) {
+                numbers += '<span class="muted">…</span>';
+            }
+
+            numbers += numberButton(total);
+        }
+
         return `
-     <div class="pager">
-       <button
-         data-step="-1"
-         ${state.page === 0 ? 'disabled' : ''}
-       >← Zurück</button>
+        <div class="pager">
+            <button
+                data-step="-1"
+                ${current === 1 ? 'disabled' : ''}
+            >← Zurück</button>
 
-       Seite ${fmt(state.page + 1)} / ${fmt(pages)}
+            ${numbers}
 
-       <button
-         data-step="1"
-         ${state.page >= pages - 1
-            ? 'disabled'
-        : ''}
-       >Weiter →</button>
-     </div>
-   `;
+            <button
+                data-step="1"
+                ${current === total ? 'disabled' : ''}
+            >Weiter →</button>
+        </div>
+    `;
     }
+
 
     function pageRows(rows) {
         const pageCtl = pager(rows.length);
@@ -1423,6 +1532,346 @@
         );
     }
 
+
+    // ==========================================
+    // GEBÄUDETYP-DETAILANSICHT UND MASSENAKTIONEN
+    // ==========================================
+
+    function buildingTypeMatches() {
+        const id = state.detail?.id;
+        const q = low(state.search.trim());
+
+        return state.data.stations.filter(s =>
+                                          s.familyKey === id &&
+                                          (state.buildingCenter === 'all' ||
+                                           s.center === state.buildingCenter) &&
+                                          (state.buildingStatus === 'all' ||
+                                           (state.buildingStatus === 'active'
+                                            ? s.enabled === true : s.enabled === false)) &&
+                                          (state.buildingSize === 'all' ||
+                                           (state.buildingSize === 'small' ? s.small : !s.small)) &&
+                                          (!q || [s.name, s.id, s.type, s.org]
+                                           .some(v => low(v).includes(q)))
+                                         ).sort((a, b) => a.name.localeCompare(b.name, 'de', {
+            numeric: true
+        }));
+    }
+
+    function buildingTypeDetail() {
+        const rows = buildingTypeMatches();
+        const active = rows.filter(s => s.enabled === true).length;
+        const inactive = rows.filter(s => s.enabled === false).length;
+        const unknown = rows.length - active - inactive;
+        const { items, pageCtl } = pageRows(rows);
+
+        const blocked = state.writing || state.loading ||
+              state.pending || state.writeNeedsRefresh ||
+              v24Busy || v24NeedsReload ||
+              state.buildingBulkPending;
+
+        const centerOptions = state.data.centers
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+        .map(c => `
+                <option value="${esc(c.id)}"
+                    ${state.buildingCenter === c.id ? 'selected' : ''}>
+                    ${esc(c.name)}
+                </option>
+            `).join('');
+
+        const option = (value, label, current) => `
+            <option value="${value}"
+                ${value === current ? 'selected' : ''}>
+                ${label}
+            </option>
+        `;
+
+        const pending = state.buildingBulkPending;
+
+        return `
+            <button id="lssstat-back">
+                ← Zurück zu Gebäudetypen
+            </button>
+
+            <h3>${esc(state.detail.name)} – Einzelne Wachen</h3>
+
+            <div class="toolbar" style="margin:12px 0">
+                <label>
+                    Leitstellenbereich:
+                    <select id="lssstat-building-center">
+                        ${option('all', 'Alle Leitstellenbereiche',
+                                 state.buildingCenter)}
+                        ${centerOptions}
+                    </select>
+                </label>
+
+                <label>
+                    Aktivstatus:
+                    <select id="lssstat-building-status">
+                        ${option('all', 'Alle', state.buildingStatus)}
+                        ${option('active', 'Aktiv', state.buildingStatus)}
+                        ${option('inactive', 'Inaktiv', state.buildingStatus)}
+                    </select>
+                </label>
+
+                <label>
+                    Wachengröße:
+                    <select id="lssstat-building-size">
+                        ${option('all', 'Alle', state.buildingSize)}
+                        ${option('normal', 'Normal', state.buildingSize)}
+                        ${option('small', 'Kleinwache', state.buildingSize)}
+                    </select>
+                </label>
+            </div>
+
+            <div class="notice">
+                ${fmt(rows.length)} Treffer ·
+                ${fmt(active)} aktiv ·
+                ${fmt(inactive)} inaktiv
+
+                ${unknown ? `
+                    · ${fmt(unknown)} ohne bekannten Status
+                ` : ''}
+
+                <div class="actions" style="margin-top:10px">
+                    <button data-building-bulk="on"
+                        ${blocked || inactive === 0 ? 'disabled' : ''}>
+                        Alle ${fmt(inactive)} aktivieren
+                    </button>
+
+                    <button data-building-bulk="off"
+                        ${blocked || active === 0 ? 'disabled' : ''}>
+                        Alle ${fmt(active)} deaktivieren
+                    </button>
+                </div>
+
+                <div class="muted"
+                    style="font-size:14px;margin-top:8px">
+                    Aktionen betreffen alle gefilterten Treffer,
+                    auch auf anderen Seiten.
+                </div>
+            </div>
+
+            ${pending ? `
+                <div class="confirmbox"
+                    id="lssstat-building-confirmbox">
+
+                    <h3>Massenaktion bestätigen</h3>
+
+                    <p>
+                        <b>${fmt(pending.ids.length)}</b>
+                        Wachen aus „${esc(pending.description)}“
+                        werden
+                        <b>${pending.target
+            ? 'aktiviert' : 'deaktiviert'}</b>.
+                    </p>
+
+                    <p>
+                        Die Auswahl wurde beim Klick eingefroren.
+                        Bereits passende Serverzustände werden
+                        übersprungen.
+                    </p>
+
+                    <div class="actions">
+                        <button id="lssstat-building-cancel">
+                            Abbrechen
+                        </button>
+
+                        <button class="primary"
+                            id="lssstat-building-confirm">
+                            ${fmt(pending.ids.length)}
+                            Änderungen bestätigen
+                        </button>
+                    </div>
+                </div>
+            ` : ''}
+
+            ${table(
+            [
+                ['Wache'],
+                ['Leitstellenbereich'],
+                ['Gebäudetyp'],
+                ['Status'],
+                ['Aktion']
+            ],
+
+            items.map(s => `
+                    <tr>
+                        <td>${hrefB(s)}</td>
+
+                        <td>
+                            ${esc(state.data.centers.find(c =>
+                                                          c.id === s.center)?.name ||
+                                  'Ohne Leitstelle')}
+                        </td>
+
+                        <td>
+                            ${esc(s.type)}
+                            ${s.small ? ' (Kleinwache)' : ''}
+                        </td>
+
+                        <td>
+                            ${s.enabled === true ? 'Aktiv' :
+                      s.enabled === false ? 'Inaktiv' :
+                      'Unbekannt'}
+                        </td>
+
+                        <td>
+                            ${v24Button(
+                'building',
+                s.id,
+                s.name,
+                s.enabled
+            )}
+                        </td>
+                    </tr>
+                `).join(''),
+
+            ['27%', '23%', '22%', '10%', '18%']
+        )}
+
+            ${pageCtl}
+        `;
+    }
+
+    function beginBuildingBulk(target) {
+        if (
+            state.writing ||
+            state.loading ||
+            state.pending ||
+            state.writeNeedsRefresh ||
+            state.buildingBulkPending ||
+            v24Busy ||
+            v24NeedsReload
+        ) {
+            return;
+        }
+
+        const ids = buildingTypeMatches()
+        .filter(s =>
+                typeof s.enabled === 'boolean' &&
+                s.enabled !== target
+               )
+        .map(s => s.id);
+
+        if (!ids.length) return;
+
+        state.buildingBulkPending = {
+            ids,
+            target,
+            description: state.detail.name
+        };
+
+        render();
+        $('#lssstat-content').scrollTop = 0;
+    }
+
+    async function executeBuildingBulk() {
+        const plan = state.buildingBulkPending;
+
+        if (!plan || state.writing || state.loading) {
+            return;
+        }
+
+        state.buildingBulkPending = null;
+        state.writing = true;
+        state.stopWrite = false;
+        state.writeLog = [];
+
+        let done = 0;
+        let skipped = 0;
+        let failed = false;
+
+        render();
+
+        for (const id of plan.ids) {
+            if (state.stopWrite) break;
+
+            const station = state.data.byBuilding.get(id);
+
+            try {
+                if (!station || station.enabled === plan.target) {
+                    skipped++;
+                    continue;
+                }
+
+                // Bereits getesteter 2.4.0-Schreibweg.
+                // Prüft den Serverstatus und verwendet /active.
+                await v24ChangeBuilding(
+                    id,
+                    'enabled',
+                    plan.target
+                );
+
+                done++;
+
+                state.writeLog.push(
+                    `OK: ${station.name} (${id})`
+                );
+
+            } catch (error) {
+                failed = true;
+                state.stopWrite = true;
+                state.writeNeedsRefresh = true;
+
+                state.writeLog.push(
+                    `FEHLER ${id}: ${error.message}`
+                );
+
+                console.error(
+                    '[LSS Gebäude-Massenaktion]',
+                    error
+                );
+
+                break;
+
+            } finally {
+                progress(
+                    `Wachen: ${fmt(done)} geändert, ` +
+                    `${fmt(skipped)} übersprungen`
+                );
+
+                render();
+            }
+
+            if (!state.stopWrite) {
+                await sleep(ACTION_DELAY_MS);
+            }
+        }
+
+        state.writing = false;
+
+        state.writeLog.push(
+            `${
+                failed ? 'Fehler' :
+            state.stopWrite ? 'Abgebrochen' : 'Fertig'
+            }: ${fmt(done)} geändert, ` +
+            `${fmt(skipped)} übersprungen.`
+        );
+
+        progress(
+            failed
+            ? 'Fehler: Bitte Statistik vollständig neu laden'
+            : `Fertig: ${fmt(done)} Wachen geändert`
+        );
+
+        render();
+    }
+
+    function displayStatus(status) {
+        const value = Number(status);
+
+        if (value === 6) {
+            return '6';
+        }
+
+        if ([1, 2, 3, 4, 5, 7, 8, 9].includes(value)) {
+            return '2';
+        }
+
+        return 'Unbekannt';
+    }
+
     function vehicleRows() {
         return [...state.data.vehicleByType]
             .map(([id, vs]) => {
@@ -1438,10 +1887,10 @@
                 name: vs[0].type,
                 count: vs.length,
                 status2: vs.filter(
-                    v => String(v.status) === '2'
+                    v => displayStatus(v.status) === '2'
                 ).length,
                 status6: vs.filter(
-                    v => String(v.status) === '6'
+                    v => displayStatus(v.status) === '6'
                 ).length,
                 avg: buildings.size
                 ? vs.length / buildings.size
@@ -2107,21 +2556,44 @@
             ...s,
             st: state.data.byBuilding.get(s.buildingId)
         }))
-        .filter(x =>
-                !q ||
-                [
-            x.st?.name,
-            x.st?.type,
-            extStatus(x),
-            x.buildingId
-        ].some(y => low(y).includes(q))
-               )
-        .sort((a, b) =>
-              (a.st?.name || '').localeCompare(
-            b.st?.name || '',
-            'de'
-        )
-             );
+        .filter(x => {
+            const status = extStatus(x);
+
+            const matchesStatus =
+                  state.detailStatus === 'all' ||
+                  (state.detailStatus === 'active' &&
+                   status === 'Aktiv') ||
+                  (state.detailStatus === 'inactive' &&
+                   status === 'Deaktiviert') ||
+                  (state.detailStatus === 'construction' &&
+                   status === 'Im Bau');
+
+            const matchesSearch =
+                  !q ||
+                  [
+                      x.st?.name,
+                      x.st?.type,
+                      status,
+                      x.buildingId
+                  ].some(v => low(v).includes(q));
+
+            return matchesStatus && matchesSearch;
+        });
+
+        rows.sort((a, b) => {
+            if (state.detailSort === 'status') {
+                return extStatus(a).localeCompare(
+                    extStatus(b),
+                    'de'
+                );
+            }
+
+            return (a.st?.name || '').localeCompare(
+                b.st?.name || '',
+                'de'
+            );
+        });
+
 
         const { items, pageCtl } = pageRows(rows);
 
@@ -2223,7 +2695,7 @@
      </h3>
 
      ${buttons}
-
+${detailFilters('extension')}
      ${table(
             [
                 ['Wache'],
@@ -2239,6 +2711,71 @@
    `;
     }
 
+    function detailFilters(kind, statuses = []) {
+        const options = kind === 'vehicle'
+        ? statuses.map(value => `
+            <option
+                value="${esc(value)}"
+                ${state.detailStatus === value
+                       ? 'selected' : ''}
+            >${value === '2'
+                       ? 'S2 – Einsatzbereit'
+                       : 'S6 – Nicht einsatzbereit'}</option>
+        `).join('')
+        : [
+            ['active', 'Aktiv'],
+            ['inactive', 'Deaktiviert'],
+            ['construction', 'Im Bau']
+        ].map(([value, label]) => `
+            <option
+                value="${value}"
+                ${state.detailStatus === value
+              ? 'selected' : ''}
+            >${label}</option>
+        `).join('');
+
+        return `
+        <div class="toolbar" style="margin:12px 0">
+            <label for="lssstat-detail-status">
+                Status:
+            </label>
+
+            <select id="lssstat-detail-status">
+                <option value="all">Alle Status</option>
+                ${options}
+            </select>
+
+            <label for="lssstat-detail-sort">
+                Sortieren nach:
+            </label>
+
+            <select id="lssstat-detail-sort">
+                <option value="name"
+                    ${state.detailSort === 'name'
+            ? 'selected' : ''}>
+                    ${kind === 'vehicle'
+            ? 'Fahrzeugname'
+        : 'Wachenname'}
+                </option>
+
+                <option value="status"
+                    ${state.detailSort === 'status'
+            ? 'selected' : ''}>
+                    Status
+                </option>
+
+                ${kind === 'vehicle' ? `
+                    <option value="station"
+                        ${state.detailSort === 'station'
+            ? 'selected' : ''}>
+                        Wache
+                    </option>
+                ` : ''}
+            </select>
+        </div>
+    `;
+    }
+
     // ==========================================
     // FAHRZEUGDETAILS
     // ==========================================
@@ -2251,18 +2788,55 @@
 
         const q = low(state.search.trim());
 
-        const rows = q
-        ? all.filter(v =>
-                     [
-            v.name,
-            v.id,
-            v.status,
-            state.data.byBuilding.get(
+        const statuses = ['2', '6'];
+
+        const rows = all.filter(v => {
+            const station = state.data.byBuilding.get(
                 v.buildingId
-            )?.name
-        ].some(x => low(x).includes(q))
-                    )
-        : all;
+            );
+
+            const matchesStatus =
+                  state.detailStatus === 'all' ||
+                  displayStatus(v.status) === state.detailStatus;
+
+            const matchesSearch =
+                  !q ||
+                  [
+                      v.name,
+                      v.id,
+                      v.status,
+                      station?.name
+                  ].some(x => low(x).includes(q));
+
+            return matchesStatus && matchesSearch;
+        });
+
+        rows.sort((a, b) => {
+            if (state.detailSort === 'status') {
+                return String(a.status ?? '').localeCompare(
+                    String(b.status ?? ''),
+                    'de',
+                    { numeric: true }
+                );
+            }
+
+            if (state.detailSort === 'station') {
+                const sa = state.data.byBuilding.get(
+                    a.buildingId
+                )?.name ?? '';
+
+                const sb = state.data.byBuilding.get(
+                    b.buildingId
+                )?.name ?? '';
+
+                return sa.localeCompare(sb, 'de');
+            }
+
+            return a.name.localeCompare(b.name, 'de', {
+                numeric: true
+            });
+        });
+
 
         const { items, pageCtl } = pageRows(rows);
 
@@ -2277,9 +2851,11 @@
        </td>
 
        <td>
-         ${v.status == null
-                               ? 'Unbekannt'
-                               : 'Status ' + esc(v.status)}
+         ${displayStatus(v.status) === '2'
+                               ? 'S2 – Einsatzbereit'
+                               : displayStatus(v.status) === '6'
+                               ? 'S6 – Nicht einsatzbereit'
+                               : 'Unbekannt'}
        </td>
 
        <td>
@@ -2309,7 +2885,7 @@
      <div class="notice">
        FMS-Status zum Zeitpunkt des letzten Ladens.
      </div>
-
+${detailFilters('vehicle', statuses)}
      ${table(
             [
                 ['Fahrzeug'],
@@ -2836,8 +3412,15 @@
             html += writeDialog();
         }
 
-        // Fahrzeugdetailansicht
+        // Gebäudetyp-Detailansicht
         if (
+            state.tab === 'buildingtypes' &&
+            state.detail?.kind === 'building'
+        ) {
+            html += buildingTypeDetail();
+
+            // Fahrzeugdetailansicht
+        } else if (
             state.tab === 'vehicletypes' &&
             state.detail?.kind === 'vehicle'
         ) {
@@ -2961,6 +3544,11 @@
             // GEBÄUDETYPEN
             // ======================================
 
+
+            // ======================================
+            // GEBÄUDETYPEN
+            // ======================================
+
             if (state.tab === 'buildingtypes') {
                 let body = '';
 
@@ -2971,52 +3559,89 @@
                         'police'
                     ].includes(r.key);
 
-                    const open =
-                          state.openB.has(r.key);
+                    const open = state.openB.has(r.key);
 
-                    const cells = p => `
-           <td class="num">${fmt(p.count)}</td>
-           <td class="num">${fmt(p.vehicles)}</td>
-           <td class="num">${fmt(p.personal)}</td>
-           <td class="num">
-             ${fmt(p.active)} / ${fmt(p.bought)}
-           </td>
-         `;
+                    const stations = d.stations.filter(
+                        s => s.familyKey === r.key
+                    );
+
+                    const active = list =>
+                    list.filter(s => s.enabled === true).length;
+
+                    const cells = (p, list) => `
+                        <td class="num">
+                            ${fmt(p.count)}
+                        </td>
+
+                        <td class="num">
+                            ${fmt(active(list))} / ${fmt(p.count)}
+                        </td>
+
+                        <td class="num">
+                            ${fmt(p.vehicles)}
+                        </td>
+
+                        <td class="num">
+                            ${fmt(p.personal)}
+                        </td>
+
+                        <td class="num">
+                            ${fmt(p.active)} / ${fmt(p.bought)}
+                        </td>
+                    `;
 
                     body += `
-           <tr>
-             <td>
-               ${can ? `
-                 <button
+    <tr>
+        <td>
+            ${can ? `
+                <button
                    class="linkbtn"
-                   data-building="${esc(r.key)}"
-                 >
-                   ${open ? '▾' : '▸'}
-                   ${esc(r.name)}
-                 </button>
-               ` : esc(r.name)}
-             </td>
+                    data-building="${esc(r.key)}"
+                    title="Normal- und Kleinwachen aufklappen"
+                >
+                    ${open ? '▾' : '▸'} ${esc(r.name)}
+                </button>
 
-             ${cells(r)}
-           </tr>
-         `;
+                <button
+                    class="lssstat-detail-btn"
+                    data-building-detail="${esc(r.key)}"
+                    title="Alle einzelnen Wachen anzeigen"
+                >
+                    Wachen anzeigen
+                </button>
+            ` : `
+                <button
+                    class="linkbtn"
+                    data-building-detail="${esc(r.key)}"
+                >
+                    ${esc(r.name)}
+                </button>
+            `}
+        </td>
+
+        ${cells(r, stations)}
+    </tr>
+`;
+
 
                     if (can && open) {
-                        for (
-                            const [key, label] of [
-                                ['normal', 'normal'],
-                                ['small', 'Kleinwache']
-                            ]
-                        ) {
-                            body += `
-               <tr class="subrow">
-                 <td class="indent">
-                   ↳ ${esc(label)}
-                 </td>
+                        for (const [key, label] of [
+                            ['normal', 'normal'],
+                            ['small', 'Kleinwache']
+                        ]) {
+                            const part = stations.filter(
+                                s => s.small === (key === 'small')
+                            );
 
-                 ${cells(r[key])}
-               </tr>
-             `;
+                            body += `
+                                <tr class="subrow">
+                                    <td class="indent">
+                                        ↳ ${esc(label)}
+                                    </td>
+
+                                    ${cells(r[key], part)}
+                                </tr>
+                            `;
                         }
                     }
                 }
@@ -3025,14 +3650,19 @@
                     [
                         ['Gebäudetyp'],
                         ['Gebäude', true],
+                        ['Aktiv / Gesamt', true],
                         ['Fahrzeuge', true],
                         ['Personal', true],
                         ['Erweiterungen Aktiv / Gekauft', true]
                     ],
+
                     body,
-                    ['34%', '12%', '12%', '15%', '27%']
+
+                    ['29%','10%','15%','11%','12%','23%']
                 );
             }
+
+
 
             // ======================================
             // FAHRZEUGTYPEN
@@ -3199,12 +3829,25 @@
                 state.tab = b.dataset.tab;
                 state.detail = null;
                 state.pending = null;
+                state.buildingBulkPending = null;
                 state.page = 0;
                 clearSearch();
                 render();
             };
         });
+        c.querySelector('#lssstat-detail-status')
+            ?.addEventListener('change', e => {
+            state.detailStatus = e.target.value;
+            state.page = 0;
+            render();
+        });
 
+        c.querySelector('#lssstat-detail-sort')
+            ?.addEventListener('change', e => {
+            state.detailSort = e.target.value;
+            state.page = 0;
+            render();
+        });
         c.querySelector('#lssstat-charts')
             ?.addEventListener('click', () => {
             state.charts = !state.charts;
@@ -3227,6 +3870,77 @@
                 c.scrollTop = 0;
             };
         });
+        c.querySelectorAll('[data-page]').forEach(button => {
+            button.onclick = () => {
+                state.page = Number(button.dataset.page);
+                render();
+                c.scrollTop = 0;
+            };
+        });
+
+        // ==========================================
+        // GEBÄUDETYP-DETAILANSICHT – INTERAKTIONEN
+        // ==========================================
+
+        // Gebäudetyp öffnen
+        c.querySelectorAll('[data-building-detail]')
+            .forEach(b => {
+            b.onclick = () => {
+                state.detail = {
+                    kind: 'building',
+                    id: b.dataset.buildingDetail,
+                    name: b.textContent.trim()
+                };
+
+                state.page = 0;
+                state.buildingCenter = 'all';
+                state.buildingStatus = 'all';
+                state.buildingSize = 'all';
+                state.buildingBulkPending = null;
+
+                clearSearch();
+                render();
+            };
+        });
+
+        // Filter in der Gebäudetyp-Detailansicht
+        for (const [selector, property] of [
+            ['#lssstat-building-center', 'buildingCenter'],
+            ['#lssstat-building-status', 'buildingStatus'],
+            ['#lssstat-building-size', 'buildingSize']
+        ]) {
+            c.querySelector(selector)
+                ?.addEventListener('change', e => {
+                state[property] = e.target.value;
+                state.page = 0;
+                state.buildingBulkPending = null;
+                render();
+            });
+        }
+
+        // Massenaktion vorbereiten
+        c.querySelectorAll('[data-building-bulk]')
+            .forEach(button => {
+            button.onclick = () => {
+                beginBuildingBulk(
+                    button.dataset.buildingBulk === 'on'
+                );
+            };
+        });
+
+        // Massenaktion abbrechen, bevor sie startet
+        c.querySelector('#lssstat-building-cancel')
+            ?.addEventListener('click', () => {
+            state.buildingBulkPending = null;
+            render();
+        });
+
+        // Bestätigte Massenaktion starten
+        c.querySelector('#lssstat-building-confirm')
+            ?.addEventListener(
+            'click',
+            executeBuildingBulk
+        );
 
         // Kleinwachen aufklappen
         c.querySelectorAll('[data-building]')
@@ -3272,6 +3986,8 @@
 
                 state.page = 0;
                 clearSearch();
+                state.detailStatus = 'all';
+                state.detailSort = 'name';
                 render();
             };
         });
@@ -3287,6 +4003,8 @@
 
                 state.page = 0;
                 clearSearch();
+                state.detailStatus = 'all';
+                state.detailSort = 'name';
                 render();
             };
         });
@@ -3295,6 +4013,7 @@
             ?.addEventListener('click', () => {
             state.detail = null;
             state.pending = null;
+            state.buildingBulkPending = null;
             state.page = 0;
             clearSearch();
             render();
@@ -3365,12 +4084,12 @@
                     activate,
                     `${ex.caption}: Alle ${
              activate
-                ? 'aktivieren'
-                : 'deaktivieren'
-                }`
+                    ? 'aktivieren'
+                    : 'deaktivieren'
+                    }`
          );
-        };
-    });
+            };
+        });
 
         // Einzelaktionen vorbereiten
         c.querySelectorAll('[data-single]')
@@ -3386,8 +4105,8 @@
                     b.dataset.target === 'on',
                     `Einzeländerung: ${ex.caption}`
          );
-        };
-    });
+            };
+        });
 
         c.querySelector('#lssstat-write-confirm')
             ?.addEventListener(
@@ -3602,5 +4321,962 @@
     }
 
     render();
+
+    // ==========================================================
+    // VERSION 2.4.0 – FAHRZEUGE, WACHEN UND LEITSTELLEN
+    // Vor dem abschließenden render(); innerhalb der IIFE einfügen.
+    // ==========================================================
+
+    const v24Filter = { station: 'all', center: 'all', own: 'all' };
+    let v24Busy = false;
+    let v24NeedsReload = false;
+    let v24Message = '';
+
+    // Beide Gebäude-Eigenschaften kommen direkt aus der V2-Antwort.
+    const v24OriginalCompile = compile;
+    compile = function (buildings, vehicles, bmeta, vmeta) {
+        const data = v24OriginalCompile(buildings, vehicles, bmeta, vmeta);
+
+        for (const b of buildings) {
+            const station = data.byBuilding.get(String(b.id));
+            if (!station) continue;
+
+            station.enabled = typeof b.enabled === 'boolean'
+                ? b.enabled : null;
+
+            station.ownMissions =
+                typeof b.generate_own_missions === 'boolean'
+                ? b.generate_own_missions : null;
+        }
+
+        for (const c of data.centers) {
+            const station = data.byBuilding.get(String(c.id));
+            c.enabled = station?.enabled ?? null;
+            c.ownMissions = station?.ownMissions ?? null;
+        }
+
+        v24NeedsReload = false;
+        v24Message = '';
+        return data;
+    };
+
+    const v24Bool = value =>
+    value === true || value === 'true' ||
+          value === '1' || value === 1;
+
+    async function v24JSON(url) {
+        const response = await fetch(url, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { Accept: 'application/json' }
+        });
+
+        if (!response.ok) {
+            throw Error(`HTTP ${response.status}: ${url}`);
+        }
+
+        const data = await response.json();
+        return data?.result ?? data;
+    }
+
+    async function v24Building(id) {
+        const numericId = Number(id);
+
+        if (!Number.isSafeInteger(numericId) || numericId <= 0) {
+            throw Error('Ungültige Gebäude-ID');
+        }
+
+        const result = await v24JSON(
+            `/api/buildings/${numericId}`
+        );
+
+        if (String(result?.id) !== String(id)) {
+            throw Error(
+                'Gebäude-ID der API-Antwort stimmt nicht überein'
+            );
+        }
+
+        return result;
+    }
+
+    async function v24Vehicle(id) {
+        const numericId = Number(id);
+
+        if (!Number.isSafeInteger(numericId) || numericId <= 0) {
+            throw Error('Ungültige Fahrzeug-ID');
+        }
+
+        const result = await v24JSON(
+            `/api/vehicles/${numericId}`
+        );
+
+        if (String(result?.id) !== String(id)) {
+            throw Error(
+                'Fahrzeug-ID der API-Antwort stimmt nicht überein'
+            );
+        }
+
+        const status =
+              result.fms_real ?? result.fms ?? result.state;
+
+        if (
+            status == null ||
+            !Number.isFinite(Number(status))
+        ) {
+            throw Error('FMS-Status konnte nicht gelesen werden');
+        }
+
+        return Number(status);
+    }
+
+    async function v24Verify(check, expected) {
+        for (let i = 0; i < 4; i++) {
+            await sleep(450);
+
+            if (await check() === expected) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Normales Spielformular laden und nur die gewünschte
+    // Checkbox verändern. Alle anderen Felder bleiben erhalten.
+    async function v24SubmitBuildingField(
+    id, field, target, before
+    ) {
+        const edit = await fetch(
+            `/buildings/${encodeURIComponent(id)}/edit`,
+            {
+                credentials: 'same-origin',
+                cache: 'no-store'
+            }
+        );
+
+        if (!edit.ok) {
+            throw Error(
+                `Bearbeitungsseite: HTTP ${edit.status}`
+            );
+        }
+
+        const html = await edit.text();
+        const doc = new DOMParser().parseFromString(
+            html, 'text/html'
+        );
+
+        const inputs = [...doc.querySelectorAll('input')]
+        .filter(input => input.name === field);
+
+        const checkbox = inputs.find(
+            input => input.type === 'checkbox'
+        );
+
+        const hidden = inputs.find(
+            input => input.type === 'hidden'
+        );
+
+        const form = checkbox?.form;
+
+        if (!form || !hidden) {
+            throw Error(
+                'Erwartetes Bearbeitungsformular nicht gefunden'
+            );
+        }
+
+        const enabledValue = v24Bool(checkbox.value);
+        const hiddenValue = v24Bool(hidden.value);
+
+        if (enabledValue === hiddenValue) {
+            throw Error('Formularwerte sind nicht eindeutig');
+        }
+
+        const formCurrent = checkbox.checked
+        ? enabledValue : hiddenValue;
+
+        if (formCurrent !== before) {
+            throw Error(
+                'Formular und API widersprechen sich. ' +
+                'Kein Schreibzugriff.'
+            );
+        }
+
+        checkbox.checked = enabledValue === target;
+
+        const action = new URL(
+            form.getAttribute('action') ||
+            `/buildings/${id}`,
+            location.origin
+        );
+
+        const allowedPath = new RegExp(
+            `^/buildings/${id}(?:/edit)?$`
+        );
+
+        if (
+            action.origin !== location.origin ||
+            !allowedPath.test(action.pathname)
+        ) {
+            throw Error(
+                'Unerwartete Formularadresse: ' +
+                'Schreibaktion abgebrochen'
+            );
+        }
+
+        if (form.method.toUpperCase() !== 'POST') {
+            throw Error('Unbekannte Formularmethode');
+        }
+
+        const token = document.querySelector(
+            'meta[name="csrf-token"]'
+        )?.content;
+
+        if (!token) {
+            throw Error('CSRF-Token fehlt');
+        }
+
+        const response = await fetch(
+            action.pathname + action.search,
+            {
+                method: 'POST',
+                credentials: 'same-origin',
+                redirect: 'follow',
+                headers: {
+                    'X-CSRF-Token': token
+                },
+                body: new FormData(form)
+            }
+        );
+
+        if (
+            !response.ok ||
+            new URL(response.url)
+            .pathname.includes('sign_in')
+        ) {
+            throw Error(
+                `Speichern fehlgeschlagen: HTTP ${response.status}`
+            );
+        }
+    }
+
+    async function v24ChangeBuilding(id, field, target) {
+        const local = state.data.byBuilding.get(String(id));
+
+        if (!local) {
+            throw Error(
+                'Wache/Leitstelle nicht im Statistikmodell'
+            );
+        }
+
+        if (
+            field === 'generate_own_missions' &&
+            local.typeId !== '7'
+        ) {
+            throw Error(
+                'Eigener Einsatzbereich ist nur für ' +
+                'Leitstellen verfügbar'
+            );
+        }
+
+        const prop = field === 'enabled'
+        ? 'enabled' : 'ownMissions';
+
+        const before = await v24Building(id);
+
+        if (typeof before[field] !== 'boolean') {
+            throw Error(`API-Feld ${field} fehlt`);
+        }
+
+        if (before[field] !== local[prop]) {
+            local[prop] = before[field];
+
+            const center = state.data.centers.find(
+                x => x.id === String(id)
+            );
+
+            if (center) {
+                center[prop] = before[field];
+            }
+
+            throw Error(
+                'Status wurde extern geändert. ' +
+                'Anzeige korrigiert; erneut prüfen.'
+            );
+        }
+
+        if (before[field] === target) return;
+
+        const name = field === 'enabled'
+        ? 'building[active]'
+        : 'building[generate_own_missions]';
+
+
+        if (field === 'enabled') {
+            // Einheitlicher Aktivierungsschalter für alle Gebäude,
+            // einschließlich Leitstellen.
+            const response = await fetch(
+                `/buildings/${encodeURIComponent(id)}/active`,
+                {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                    redirect: 'follow'
+                }
+            );
+
+            if (
+                !response.ok ||
+                new URL(response.url)
+                .pathname.includes('sign_in')
+            ) {
+                throw new Error(
+                    `Gebäude-Umschaltung fehlgeschlagen: ` +
+                    `HTTP ${response.status}`
+        );
+            }
+
+        } else if (field === 'generate_own_missions') {
+            // Nur der eigene Leitstellenbereich wird
+            // über das Bearbeitungsformular geändert.
+            await v24SubmitBuildingField(
+                id, name, target, before[field]
+            );
+
+        } else {
+            throw new Error(
+                `Unbekannte Gebäudeeinstellung: ${field}`
+    );
+        }
+
+
+        const confirmed = await v24Verify(async () => {
+            const current = await v24Building(id);
+            return current[field];
+        }, target);
+
+        if (!confirmed) {
+            v24NeedsReload = true;
+
+            throw Error(
+                'Schreibzugriff erfolgte, aber neuer ' +
+                'Serverstatus nicht bestätigt. ' +
+                'Bitte alle Daten neu laden.'
+            );
+        }
+
+        local[prop] = target;
+
+        const center = state.data.centers.find(
+            x => x.id === String(id)
+        );
+
+        if (center) {
+            center[prop] = target;
+        }
+    }
+
+    async function v24ChangeVehicle(id, target) {
+        const vehicle = state.data.compactVehicles.find(
+            x => x.id === String(id)
+        );
+
+        if (!vehicle) {
+            throw Error(
+                'Fahrzeug nicht im Statistikmodell'
+            );
+        }
+
+        const before = await v24Vehicle(id);
+
+        if (before !== Number(vehicle.status)) {
+            vehicle.status = before;
+
+            throw Error(
+                'FMS wurde extern geändert. ' +
+                'Anzeige korrigiert; erneut prüfen.'
+            );
+        }
+
+        if (![2, 6].includes(before)) {
+            throw Error(
+                `FMS ${before} darf nicht automatisch geändert werden`
+            );
+        }
+
+        if ((before === 2 ? 6 : 2) !== target) {
+            throw Error(
+                'Zielstatus passt nicht zum Ausgangsstatus'
+            );
+        }
+
+        const response = await fetch(
+            `/vehicles/${encodeURIComponent(id)}/set_fms/${target}`,
+            {
+                credentials: 'same-origin',
+                cache: 'no-store'
+            }
+        );
+
+        if (
+            !response.ok ||
+            new URL(response.url)
+            .pathname.includes('sign_in')
+        ) {
+            throw Error(
+                `FMS-Umschaltung fehlgeschlagen: ` +
+                `HTTP ${response.status}`
+            );
+        }
+
+        const confirmed = await v24Verify(
+            () => v24Vehicle(id),
+            target
+        );
+
+        if (!confirmed) {
+            v24NeedsReload = true;
+
+            throw Error(
+                'FMS-Änderung konnte nicht bestätigt werden. ' +
+                'Bitte Daten neu laden.'
+            );
+        }
+
+        vehicle.status = target;
+    }
+
+    async function v24Run(button) {
+        if (
+            v24Busy ||
+            v24NeedsReload ||
+            state.loading ||
+            state.writing ||
+            state.pending ||
+            state.buildingBulkPending ||
+            state.writeNeedsRefresh
+        ) return;
+
+        const id = button.dataset.v24Id;
+        const kind = button.dataset.v24Kind;
+        const target =
+              button.dataset.v24Target === 'true';
+        const label = button.dataset.v24Label;
+
+        const decision = kind === 'vehicle'
+        ? `Fahrzeug ${label}: auf FMS ${
+                target ? '2' : '6'
+        } setzen?`
+            : `${label}: ${
+                kind === 'own'
+        ? 'eigenen Einsatzbereich'
+        : 'Gebäude'
+        } ${
+                target ? 'aktivieren' : 'deaktivieren'
+        }?`;
+
+        if (!window.confirm(decision)) return;
+
+        v24Busy = true;
+        v24Message = `Prüfe und ändere: ${label} …`;
+        render();
+
+        try {
+            if (kind === 'vehicle') {
+                await v24ChangeVehicle(
+                    id,
+                    target ? 2 : 6
+                );
+            } else {
+                await v24ChangeBuilding(
+                    id,
+                    kind === 'own'
+                    ? 'generate_own_missions'
+                    : 'enabled',
+                    target
+                );
+            }
+
+            v24Message =
+                `Erfolgreich bestätigt: ${label}`;
+
+        } catch (error) {
+            v24Message =
+                `FEHLER bei ${label}: ${error.message}`;
+
+            console.error(
+                '[LSS Statistik 2.4]',
+                error
+            );
+
+        } finally {
+            v24Busy = false;
+            render();
+        }
+    }
+
+    function v24Button(kind, id, label, current) {
+        if (typeof current !== 'boolean') {
+            return 'Unbekannt';
+        }
+
+        const target = !current;
+
+        const statusClass = current
+        ? 'lssstat-status-active'
+        : 'lssstat-status-inactive';
+
+        const actionName = kind === 'own'
+        ? 'Eigenen Einsatzbereich'
+        : kind === 'vehicle'
+        ? 'Fahrzeug'
+        : 'Gebäude';
+
+        const title = `${actionName} ${
+        target ? 'aktivieren' : 'deaktivieren'
+        }`;
+
+        const disabled =
+              v24Busy ||
+              v24NeedsReload ||
+              state.loading ||
+              state.writing ||
+              state.pending ||
+              state.buildingBulkPending ||
+              state.writeNeedsRefresh;
+
+        return `
+        <button
+            type="button"
+            class="${statusClass}"
+            data-v24-kind="${kind}"
+            data-v24-id="${esc(id)}"
+            data-v24-label="${esc(label)}"
+            data-v24-target="${target}"
+            title="${esc(title)}"
+            ${disabled ? 'disabled' : ''}
+        >
+            ${current ? 'Aktiv' : 'Inaktiv'}
+        </button>
+    `;
+    }
+
+
+    function v24FilterUI(kind) {
+        const element = document.createElement('div');
+        element.className = 'toolbar';
+        element.style.margin = '10px 0';
+
+        const entries = kind === 'stations'
+        ? [
+            [
+                'station',
+                'Aktivstatus',
+                [
+                    ['all', 'Alle'],
+                    ['active', 'Aktiv'],
+                    ['inactive', 'Inaktiv']
+                ]
+            ]
+        ]
+        : [
+            [
+                'center',
+                'Aktivstatus',
+                [
+                    ['all', 'Alle'],
+                    ['active', 'Aktiv'],
+                    ['inactive', 'Inaktiv']
+                ]
+            ],
+            [
+                'own',
+                'Eigener Bereich',
+                [
+                    ['all', 'Alle'],
+                    ['yes', 'Ja'],
+                    ['no', 'Nein']
+                ]
+            ]
+        ];
+
+        for (const [key, label, options] of entries) {
+            const selectLabel =
+                  document.createElement('label');
+
+            selectLabel.textContent = `${label}: `;
+
+            const select =
+                  document.createElement('select');
+
+            select.setAttribute(
+                'aria-label',
+                label
+            );
+
+            for (const [value, text] of options) {
+                const option =
+                      document.createElement('option');
+
+                option.value = value;
+                option.textContent = text;
+                select.append(option);
+            }
+
+            select.value = v24Filter[key];
+
+            select.addEventListener('change', () => {
+                v24Filter[key] = select.value;
+                state.page = 0;
+                render();
+            });
+
+            selectLabel.append(select);
+            element.append(selectLabel);
+        }
+
+        return element;
+    }
+
+    function v24Decorate() {
+        const c = $('#lssstat-content');
+
+        if (!state.data || !c) return;
+
+        if (v24Message) {
+            const notice =
+                  document.createElement('div');
+
+            notice.className =
+                'notice' +
+                (
+                v24Message.startsWith('FEHLER')
+                ? ' error'
+                : ''
+            );
+
+            notice.textContent = v24Message;
+            c.prepend(notice);
+        }
+
+        const disabled =
+              v24Busy ||
+              v24NeedsReload ||
+              state.writing ||
+              state.loading ||
+              Boolean(state.pending) ||
+              state.writeNeedsRefresh;
+
+        // ------------------------------------------
+        // FAHRZEUGDETAILS
+        // ------------------------------------------
+
+        if (
+            state.tab === 'vehicletypes' &&
+            state.detail?.kind === 'vehicle'
+        ) {
+            const tableEl =
+                  c.querySelector('.tablebox table');
+
+            if (!tableEl) return;
+
+            const colgroup =
+                  tableEl.querySelectorAll(
+                      'colgroup col'
+                  );
+
+            [27, 25, 28, 9].forEach((w, i) => {
+                if (colgroup[i]) {
+                    colgroup[i].style.width =
+                        `${w}%`;
+                }
+            });
+
+            const col =
+                  document.createElement('col');
+
+            col.style.width = '11%';
+
+            tableEl.querySelector('colgroup')
+                ?.append(col);
+
+            const th =
+                  document.createElement('th');
+
+            th.textContent = 'FMS-Aktion';
+
+            tableEl.querySelector('thead tr')
+                ?.append(th);
+
+            for (
+                const tr of tableEl.querySelectorAll(
+                    'tbody tr'
+                )
+            ) {
+                const link = tr.querySelector(
+                    'a[href^="/vehicles/"]'
+                );
+
+                const id = link
+                ?.getAttribute('href')
+                ?.match(/\/vehicles\/(\d+)/)?.[1];
+
+                if (!id) continue;
+
+                const vehicle = (
+                    state.data.vehicleByType.get(
+                        state.detail.id
+                    ) || []
+                ).find(x => x.id === id);
+
+                if (!vehicle) continue;
+
+                const fms = Number(vehicle.status);
+                const statusCell = tr.cells[1];
+
+                if (
+                    statusCell &&
+                    fms !== 2 &&
+                    fms !== 6
+                ) {
+                    statusCell.insertAdjacentHTML(
+                        'beforeend',
+                        `<div
+                            class="muted"
+                            style="font-size:13px"
+                        >
+                            Tatsächlich S${esc(fms)}
+                        </div>`
+                    );
+                }
+
+                const td =
+                      document.createElement('td');
+
+                if ([2, 6].includes(fms)) {
+                    td.innerHTML = `
+                        <button
+                            type="button"
+                            data-v24-kind="vehicle"
+                            data-v24-id="${esc(id)}"
+                            data-v24-label="${
+                                esc(vehicle.name)
+                }"
+                            data-v24-target="${
+                                fms === 6
+                }"
+                            ${
+                                disabled
+                        ? 'disabled' : ''
+                }
+                        >
+                            ${
+                                fms === 2
+                        ? 'Auf S6'
+                    : 'Auf S2'
+                }
+                        </button>
+                    `;
+                } else {
+                    td.textContent =
+                        'Nicht schaltbar';
+
+                    td.className = 'muted';
+                }
+
+                tr.append(td);
+            }
+        }
+
+        // ------------------------------------------
+        // WACHEN UND LEITSTELLEN
+        // ------------------------------------------
+
+        if (
+            state.tab === 'stations' ||
+            state.tab === 'centers'
+        ) {
+            const tableEl =
+                  c.querySelector('.tablebox table');
+
+            if (!tableEl) return;
+
+            tableEl.parentElement.before(
+                v24FilterUI(state.tab)
+            );
+
+            const centers =
+                  state.tab === 'centers';
+
+            const th =
+                  document.createElement('th');
+
+            th.textContent = 'Aktivstatus';
+
+            tableEl.querySelector('thead tr')
+                ?.append(th);
+
+            if (centers) {
+                const ownTh =
+                      document.createElement('th');
+
+                ownTh.textContent =
+                    'Eigener Bereich';
+
+                tableEl.querySelector('thead tr')
+                    ?.append(ownTh);
+            }
+
+            const widths = centers
+            ? [25, 9, 9, 25, 16, 16]
+            : [23, 17, 13, 9, 22, 16];
+
+            const cols =
+                  tableEl.querySelectorAll(
+                      'colgroup col'
+                  );
+
+            widths.forEach((w, i) => {
+                if (cols[i]) {
+                    cols[i].style.width =
+                        `${w}%`;
+                } else {
+                    const col =
+                          document.createElement('col');
+
+                    col.style.width = `${w}%`;
+
+                    tableEl.querySelector('colgroup')
+                        ?.append(col);
+                }
+            });
+
+            for (
+                const tr of tableEl.querySelectorAll(
+                    'tbody tr'
+                )
+            ) {
+                const link = tr.querySelector(
+                    'a[href^="/buildings/"]'
+                );
+
+                const id = link
+                ?.getAttribute('href')
+                ?.match(/\/buildings\/(\d+)/)?.[1];
+
+                const station = id &&
+                      state.data.byBuilding.get(id);
+
+                const td =
+                      document.createElement('td');
+
+                td.innerHTML = station
+                    ? v24Button(
+                    'building',
+                    id,
+                    station.name,
+                    station.enabled
+                )
+                : '—';
+
+                tr.append(td);
+
+                if (centers) {
+                    const ownTd =
+                          document.createElement('td');
+
+                    ownTd.innerHTML = station
+                        ? v24Button(
+                        'own',
+                        id,
+                        station.name,
+                        station.ownMissions
+                    )
+                    : '—';
+
+                    tr.append(ownTd);
+                }
+            }
+        }
+
+        // Klickereignisse für die neuen Buttons
+        c.querySelectorAll('[data-v24-kind]')
+            .forEach(b => {
+            b.addEventListener(
+                'click',
+                () => v24Run(b)
+            );
+        });
+    }
+
+    // ------------------------------------------
+    // BESTEHENDE ANSICHTEN ERWEITERN
+    // ------------------------------------------
+
+    const v24OriginalRender = render;
+
+    render = function () {
+        const d = state.data;
+
+        let origStations;
+        let origCenters;
+
+        if (
+            d &&
+            state.tab === 'stations'
+        ) {
+            origStations = d.stations;
+
+            d.stations = origStations.filter(
+                s =>
+                v24Filter.station === 'all' ||
+                (
+                    v24Filter.station === 'active'
+                    ? s.enabled === true
+                    : s.enabled === false
+                )
+            );
+
+        } else if (
+            d &&
+            state.tab === 'centers'
+        ) {
+            origCenters = d.centers;
+
+            d.centers = origCenters.filter(c => {
+                const activeOK =
+                      v24Filter.center === 'all' ||
+                      (
+                          v24Filter.center === 'active'
+                          ? c.enabled === true
+                          : c.enabled === false
+                      );
+
+                const ownOK =
+                      v24Filter.own === 'all' ||
+                      (
+                          v24Filter.own === 'yes'
+                          ? c.ownMissions === true
+                          : c.ownMissions === false
+                      );
+
+                return activeOK && ownOK;
+            });
+        }
+
+        try {
+            v24OriginalRender();
+
+        } finally {
+            if (origStations) {
+                d.stations = origStations;
+            }
+
+            if (origCenters) {
+                d.centers = origCenters;
+            }
+        }
+
+        v24Decorate();
+    };
 
 })();
