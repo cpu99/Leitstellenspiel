@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         LSS Statistik-Dashboard
 // @license      MIT
-// @version      2.2.0
+// @version      2.3.1
 // @author       cpu99 x ChatGPT
 // @description  Gebäude, Kleinwachen, Fahrzeuge, Diagramme und Erweiterungen
 // @namespace    local.lss.statistics
@@ -16,39 +16,39 @@
 // ==/UserScript==
 
 /*
- * ==========================================
- * HINWEISE & HAFTUNGSAUSSCHLUSS
- * ==========================================
- *
- * Dieses Script wurde mithilfe künstlicher Intelligenz
- * (OpenAI ChatGPT) auf Grundlage meiner persönlichen
- * Anforderungen und Prompts erstellt.
- *
- * Es handelt sich um ein privates, inoffizielles
- * Fanprojekt ohne kommerzielle Absichten.
- *
- * Das Script wird ohne Gewähr für Richtigkeit,
- * Vollständigkeit, Aktualität, Zuverlässigkeit
- * oder Funktionsfähigkeit bereitgestellt.
- *
- * Insbesondere können fehlerhafte oder unvollständige
- * Statistiken, technische Probleme und Inkompatibilitäten
- * mit zukünftigen Spielversionen nicht ausgeschlossen werden.
- *
- * Die Nutzung erfolgt auf eigene Verantwortung.
- * Eine Haftung für Schäden oder Nachteile wird,
- * soweit gesetzlich zulässig, ausgeschlossen.
- * Gesetzlich zwingende Haftungsansprüche bleiben unberührt.
- *
- * Es besteht kein Anspruch auf Updates, Fehlerbehebung
- * oder technischen Support.
- *
- * Dieses Script steht in keiner offiziellen Verbindung
- * zu den Betreibern des Leitstellenspiels oder des
- * LSS-Managers und wird von diesen nicht unterstützt.
- *
- * ==========================================
-*/
+  * ==========================================
+  * HINWEISE & HAFTUNGSAUSSCHLUSS
+  * ==========================================
+  *
+  * Dieses Script wurde mithilfe künstlicher Intelligenz
+  * (OpenAI ChatGPT) auf Grundlage meiner persönlichen
+  * Anforderungen und Prompts erstellt.
+  *
+  * Es handelt sich um ein privates, inoffizielles
+  * Fanprojekt ohne kommerzielle Absichten.
+  *
+  * Das Script wird ohne Gewähr für Richtigkeit,
+  * Vollständigkeit, Aktualität, Zuverlässigkeit
+  * oder Funktionsfähigkeit bereitgestellt.
+  *
+  * Insbesondere können fehlerhafte oder unvollständige
+  * Statistiken, technische Probleme und Inkompatibilitäten
+  * mit zukünftigen Spielversionen nicht ausgeschlossen werden.
+  *
+  * Die Nutzung erfolgt auf eigene Verantwortung.
+  * Eine Haftung für Schäden oder Nachteile wird,
+  * soweit gesetzlich zulässig, ausgeschlossen.
+  * Gesetzlich zwingende Haftungsansprüche bleiben unberührt.
+  *
+  * Es besteht kein Anspruch auf Updates, Fehlerbehebung
+  * oder technischen Support.
+  *
+  * Dieses Script steht in keiner offiziellen Verbindung
+  * zu den Betreibern des Leitstellenspiels oder des
+  * LSS-Managers und wird von diesen nicht unterstützt.
+  *
+  * ==========================================
+  */
 
 (() => {
     'use strict';
@@ -60,9 +60,12 @@
     // EINSTELLUNGEN
     // ==========================================
 
-    const MIN_CHART_COUNT = 10; // Unterhalb dieser Anzahl werden Typen als „Sonstige“ zusammengefasst.
+    const MIN_CHART_COUNT = 4; // Unterhalb dieser Anzahl werden Typen als „Sonstige“ zusammengefasst.
     const PAGE_LIMIT = 4000; // Maximale Anzahl der Datensätze pro API-Abfrage. maximal 8.000 je kleiner die Zahl, desto geringer das Risiko eines Timeouts
     const PAGE_ROWS = 100; // Anzahl der sichtbaren Tabellenzeilen pro Seite.
+
+    // Pause nach jeder erfolgreichen Schreibaktion
+    const ACTION_DELAY_MS = 200; // 200 ms müssen mind. vorhanden sein, siehe Forum
 
     const ORGS = [
         'Feuerwehr',
@@ -80,51 +83,14 @@
         '#d78ea9'
     ];
 
-    const fmt = n =>
-    Number(n || 0).toLocaleString('de-DE');
-
-    const low = v =>
-    String(v ?? '').toLocaleLowerCase('de');
-
-    const esc = v => String(v ?? '').replace(
-        /[&<>"']/g,
-        c => ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;'
-        }[c])
-    );
-
-    const idOf = v =>
-    v == null || v === '' ? null : String(v);
-
-    const inc = (obj, key, n = 1) => {
-        obj[key] = (obj[key] || 0) + n;
+    const FAMILIES = {
+        0: ['fire', 'Feuerwachen', 'Feuerwehr', 0],
+        18: ['fire', 'Feuerwachen', 'Feuerwehr', 1],
+        2: ['rescue', 'Rettungswachen', 'Rettungsdienst', 0],
+        20: ['rescue', 'Rettungswachen', 'Rettungsdienst', 1],
+        6: ['police', 'Polizeiwachen', 'Polizei', 0],
+        19: ['police', 'Polizeiwachen', 'Polizei', 1]
     };
-
-    const sorted = obj =>
-    Object.entries(obj).sort(
-        (a, b) =>
-        b[1] - a[1] ||
-        a[0].localeCompare(b[0], 'de')
-    );
-
-    const buildingLink = st => `
-     <a
-       href="/buildings/${encodeURIComponent(st.id)}"
-       target="_blank"
-       rel="noopener"
-     >${esc(st.name)}</a>
-   `;
-
-    const statusName = x =>
-    x.available !== true
-    ? 'Im Bau'
-    : x.enabled === true
-    ? 'Aktiv'
-    : 'Deaktiviert';
 
     const state = {
         data: null,
@@ -134,538 +100,513 @@
         page: 0,
         charts: false,
         mode: 'absolute',
-        busy: false,
-        abort: null,
-        centerFilter: 'all',
-        openBuildings: new Set(),
-        openExtensions: new Set()
+        center: 'all',
+        openB: new Set(),
+        openE: new Set(),
+        loading: false,
+        loadAbort: null,
+        writing: false,
+        stopWrite: false,
+        writeNeedsRefresh: false,
+        writeLog: [],
+        pending: null
     };
 
-    // ==========================================
-    // GEBÄUDETYPEN UND KLEINWACHEN
-    // ==========================================
+    const fmt = n =>
+    Number(n || 0).toLocaleString('de-DE');
 
-    const FAMILIES = {
-        '0': {
-            key: 'fire',
-            label: 'Feuerwachen',
-            org: 'Feuerwehr',
-            small: false
-        },
+    const low = s =>
+    String(s ?? '').toLocaleLowerCase('de');
 
-        '18': {
-            key: 'fire',
-            label: 'Feuerwachen',
-            org: 'Feuerwehr',
-            small: true
-        },
+    const esc = s =>
+    String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[c]));
 
-        '2': {
-            key: 'rescue',
-            label: 'Rettungswachen',
-            org: 'Rettungsdienst',
-            small: false
-        },
+    const inc = (o, k, n = 1) =>
+    o[k] = (o[k] || 0) + n;
 
-        '20': {
-            key: 'rescue',
-            label: 'Rettungswachen',
-            org: 'Rettungsdienst',
-            small: true
-        },
+    const sorted = o =>
+    Object.entries(o).sort(
+        (a, b) =>
+        b[1] - a[1] ||
+        a[0].localeCompare(b[0], 'de')
+    );
 
-        '6': {
-            key: 'police',
-            label: 'Polizeiwachen',
-            org: 'Polizei',
-            small: false
-        },
+    const sleep = ms =>
+    new Promise(r => setTimeout(r, ms));
 
-        '19': {
-            key: 'police',
-            label: 'Polizeiwachen',
-            org: 'Polizei',
-            small: true
-        }
-    };
+    const orgFor = (id, name) => {
+        if (FAMILIES[id]) return FAMILIES[id][2];
 
-    function organization(type, label) {
-        if (FAMILIES[type]) {
-            return FAMILIES[type].org;
-        }
-
-        const s = low(label);
-
-        if (/thw|ortsverband|technisches hilfswerk/.test(s)) {
-            return 'THW';
-        }
-
-        if (/polizei|justiz/.test(s)) {
-            return 'Polizei';
-        }
+        if (/thw|ortsverband/i.test(name)) return 'THW';
+        if (/polizei|justiz/i.test(name)) return 'Polizei';
 
         if (
-            /rettungs|krankenhaus|notarzt|medizin|seg|wasserrettung|bergwacht|rettungshunde/.test(s)
+            /rettungs|krankenhaus|notarzt|wasserrettung|bergwacht|schnelleinsatzgruppe/i.test(name)
         ) return 'Rettungsdienst';
 
-        if (/feuer|werkfeuer|flughafenfeuer/.test(s)) {
-            return 'Feuerwehr';
-        }
+        if (/feuer/i.test(name)) return 'Feuerwehr';
 
         return 'Weitere';
-    }
+    };
 
-    function familyOf(b, label) {
-        const type = String(b.building_type);
-        const known = FAMILIES[type];
+    const hrefB = s => `
+   <a
+     target="_blank"
+     rel="noopener"
+     href="/buildings/${encodeURIComponent(s.id)}"
+   >${esc(s.name)}</a>
+ `;
 
-        if (known) {
-            return {
-                ...known,
-                small: b.small_building === true || known.small
-            };
-        }
-
-        return {
-            key: 'type:' + type,
-            label,
-            org: organization(type, label),
-            small: b.small_building === true
-        };
-    }
+    const extStatus = s =>
+    !s.available
+    ? 'Im Bau'
+    : s.enabled
+    ? 'Aktiv'
+    : 'Deaktiviert';
 
     // ==========================================
-    // DESIGN – DARKMODE UND LIGHTMODE
+    // DESIGN
     // ==========================================
 
-    const css = `
-   /* Statistik-Button in der oberen Navigationsleiste */
-   #lssstat-launcher {
-    position: static !important;
-    display: block !important;
-    background: transparent !important;
-    color: #ffffff !important;
-    border: none !important;
-    border-radius: 0 !important;
-    padding: 15px !important;
-    margin: 0 !important;
-    box-shadow: none !important;
-    font: 14px system-ui, sans-serif !important;
-    cursor: pointer !important;
-   }
+    const CSS = `
+ #lssstat-launcher {
+   display:block!important;
+   position:static!important;
+   padding:15px!important;
+   margin:0!important;
+   background:transparent!important;
+   color:white!important;
+   border:0!important;
+   box-shadow:none!important;
+   font:14px system-ui!important;
+   cursor:pointer!important;
+ }
 
-   #lssstat-launcher:hover {
-    background: rgba(0, 0, 0, 0.15) !important;
-   }
+ #lssstat-launcher:hover {
+   background:#0002!important;
+ }
 
+ #lssstat-nav-item.lssstat-fallback {
+   position:fixed!important;
+   left:18px!important;
+   bottom:18px!important;
+   z-index:2147483600!important;
+   background:#b8242e!important;
+   border-radius:9px!important;
+   list-style:none!important;
+ }
+
+ #lssstat-root {
+   --bg:#14181e;
+   --panel:#202630;
+   --alt:#252c36;
+   --head:#363f4b;
+   --text:#f0f3f6;
+   --muted:#afbac7;
+   --line:#414955;
+   --input:#292f39;
+   --link:#ffa0a5;
+   --hover:#343d49;
+   --notice:#262d37;
+   --red:#b8242e;
+
+   position:fixed!important;
+   inset:3vh 3vw!important;
+   z-index:2147483601!important;
+   display:none;
+   flex-direction:column!important;
+   overflow:hidden!important;
+   border-radius:14px!important;
+   border:1px solid var(--line)!important;
+   background:var(--bg)!important;
+   color:var(--text)!important;
+   font:16px/1.5 system-ui,sans-serif!important;
+   box-shadow:0 20px 70px #000b!important;
+   color-scheme:dark!important;
+ }
+
+ #lssstat-root[data-theme=light] {
+   --bg:#f3f5f8;
+   --panel:#fff;
+   --alt:#f5f7fa;
+   --head:#e5e9ee;
+   --text:#202631;
+   --muted:#64717e;
+   --line:#d3dbe5;
+   --input:#fff;
+   --link:#a6212e;
+   --hover:#e9edf2;
+   --notice:#e8edf3;
+   color-scheme:light!important;
+ }
+
+ #lssstat-root * {
+   box-sizing:border-box!important;
+ }
+
+ #lssstat-root header {
+   display:flex!important;
+   align-items:center!important;
+   justify-content:space-between!important;
+   gap:10px!important;
+   flex-wrap:wrap!important;
+   padding:12px 18px!important;
+   background:linear-gradient(
+     100deg,#b8242e,#751722
+   )!important;
+   color:white!important;
+ }
+
+ #lssstat-root h2 {
+   font:700 21px system-ui!important;
+   color:white!important;
+   margin:0!important;
+ }
+
+ #lssstat-root h3 {
+   font-size:21px!important;
+   color:var(--text)!important;
+   margin:15px 0 10px!important;
+ }
+
+ #lssstat-root button,
+ #lssstat-root input,
+ #lssstat-root select {
+   font:inherit!important;
+   min-height:34px!important;
+   border:1px solid var(--line)!important;
+   border-radius:7px!important;
+   padding:7px 10px!important;
+   background:var(--input)!important;
+   color:var(--text)!important;
+ }
+
+ #lssstat-root button {
+   cursor:pointer!important;
+   font-weight:600!important;
+ }
+
+ #lssstat-root button:disabled {
+   opacity:.42!important;
+   cursor:default!important;
+ }
+
+ #lssstat-root button:hover:not(:disabled) {
+   border-color:#df6870!important;
+   background:var(--hover)!important;
+ }
+
+ #lssstat-root button.primary,
+ #lssstat-root .tabs button.active {
+   background:var(--red)!important;
+   border-color:#e45760!important;
+   color:white!important;
+ }
+
+ #lssstat-root .toolbar,
+ #lssstat-root .tabs {
+   display:flex!important;
+   gap:8px!important;
+   flex-wrap:wrap!important;
+   align-items:center!important;
+   padding:10px 17px!important;
+   background:var(--panel)!important;
+   border-bottom:1px solid var(--line)!important;
+ }
+
+ #lssstat-root .body {
+   flex:1!important;
+   min-height:0!important;
+   overflow:auto!important;
+   padding:16px 18px!important;
+   background:var(--bg)!important;
+   color:var(--text)!important;
+ }
+
+ #lssstat-root .notice {
+   padding:10px 13px!important;
+   background:var(--notice)!important;
+   color:var(--text)!important;
+   border:1px solid var(--line)!important;
+   border-radius:8px!important;
+   margin:0 0 12px!important;
+   font-size:16px!important;
+ }
+
+ #lssstat-root .error {
+   border-color:#d24f5b!important;
+ }
+
+ #lssstat-root .muted {
+   color:var(--muted)!important;
+ }
+
+ #lssstat-root .metrics {
+   display:grid!important;
+   grid-template-columns:
+     repeat(auto-fit,minmax(175px,1fr))!important;
+   gap:12px!important;
+   margin:12px 0 20px!important;
+ }
+
+ #lssstat-root .metric,
+ #lssstat-root .chart {
+   background:var(--panel)!important;
+   color:var(--text)!important;
+   border:1px solid var(--line)!important;
+   border-radius:11px!important;
+   padding:15px!important;
+ }
+
+ #lssstat-root .metric strong {
+   display:block!important;
+   font-size:29px!important;
+   color:var(--text)!important;
+ }
+
+ #lssstat-root .tablebox {
+   width:100%!important;
+   overflow-x:auto!important;
+   border:1px solid var(--line)!important;
+   border-radius:9px!important;
+ }
+
+ #lssstat-root table {
+   width:100%!important;
+   border-collapse:collapse!important;
+   table-layout:fixed!important;
+   color:var(--text)!important;
+   background:var(--panel)!important;
+ }
+
+ #lssstat-root th,
+ #lssstat-root td {
+   padding:9px 12px!important;
+   border-bottom:1px solid var(--line)!important;
+   color:var(--text)!important;
+   vertical-align:top!important;
+   font-size:18px!important;
+   overflow-wrap:anywhere!important;
+ }
+
+ #lssstat-root th {
+   background:var(--head)!important;
+   text-align:left!important;
+ }
+
+ #lssstat-root tr:nth-child(even) td {
+   background:var(--alt)!important;
+ }
+
+ #lssstat-root tr:hover td {
+   background:var(--hover)!important;
+ }
+
+ #lssstat-root .num {
+   text-align:right!important;
+   white-space:nowrap!important;
+   font-variant-numeric:tabular-nums!important;
+ }
+
+ #lssstat-root .linkbtn {
+   border:0!important;
+   min-height:0!important;
+   padding:0!important;
+   background:transparent!important;
+   color:var(--link)!important;
+   font-size:18px!important;
+   text-decoration:underline!important;
+ }
+
+ #lssstat-root a,
+ #lssstat-root summary {
+   color:var(--link)!important;
+   cursor:pointer!important;
+ }
+
+ #lssstat-root .subrow td {
+   font-size:18px!important;
+   color:var(--muted)!important;
+ }
+
+ #lssstat-root .indent {
+   padding-left:30px!important;
+ }
+
+ #lssstat-root .pager {
+   display:flex!important;
+   gap:12px!important;
+   align-items:center!important;
+   justify-content:center!important;
+   margin:15px!important;
+ }
+
+ #lssstat-root .charts {
+   display:grid!important;
+   grid-template-columns:
+     repeat(auto-fit,minmax(410px,1fr))!important;
+   gap:14px!important;
+   margin:15px 0!important;
+ }
+
+ #lssstat-root .chartrow {
+   display:flex!important;
+   gap:16px!important;
+   align-items:center!important;
+   flex-wrap:wrap!important;
+ }
+
+ #lssstat-root .legend {
+   flex:1!important;
+   min-width:170px!important;
+   max-height:300px!important;
+   overflow:auto!important;
+ }
+
+ #lssstat-root .legenditem {
+   display:flex!important;
+   gap:8px!important;
+   align-items:flex-start!important;
+   margin:5px 0!important;
+   font-size:14px!important;
+   cursor:pointer!important;
+   padding:3px!important;
+   border-radius:5px!important;
+ }
+
+ #lssstat-root .legenditem.active {
+   background:var(--hover)!important;
+   font-weight:700!important;
+ }
+
+ #lssstat-root .swatch {
+   width:11px!important;
+   height:11px!important;
+   min-width:11px!important;
+   margin-top:5px!important;
+   border-radius:3px!important;
+ }
+
+ #lssstat-root .pie {
+   width:220px!important;
+   height:220px!important;
+   flex:none!important;
+   overflow:visible!important;
+ }
+
+ #lssstat-root .pie-segment {
+   cursor:pointer!important;
+   transition:transform .12s ease,
+     opacity .12s ease!important;
+   transform-box:fill-box!important;
+   transform-origin:center!important;
+ }
+
+ #lssstat-root .pie-segment.active {
+   transform:scale(1.035)!important;
+   filter:brightness(1.16)!important;
+   stroke:var(--panel)!important;
+   stroke-width:2px!important;
+ }
+
+ #lssstat-root .chart-focus {
+   margin-top:10px!important;
+   min-height:25px!important;
+   font-size:14px!important;
+   color:var(--text)!important;
+ }
+
+ #lssstat-root .stat {
+   display:inline-block!important;
+   padding:3px 7px!important;
+   background:var(--head)!important;
+   color:var(--text)!important;
+   border-radius:5px!important;
+   font-size:18px!important;
+ }
+
+ #lssstat-root .actionline {
+   display:flex!important;
+   gap:8px!important;
+   align-items:center!important;
+   flex-wrap:wrap!important;
+ }
+
+ #lssstat-root .danger {
+   border-color:#a82d39!important;
+   color:#f08088!important;
+ }
+
+ #lssstat-root .actions {
+    display: flex !important;
+    gap: 8px !important;
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+}
+
+ #lssstat-root .confirmbox {
+   border:2px solid #b8242e!important;
+   padding:14px!important;
+   border-radius:10px!important;
+   margin:12px 0!important;
+   background:var(--panel)!important;
+ }
+
+ @media(max-width:700px) {
    #lssstat-root {
-     --bg:#14181e;
-     --panel:#202630;
-     --alt:#252c36;
-     --head:#363f4b;
-     --text:#f0f3f6;
-     --muted:#afbac7;
-     --line:#414955;
-     --input:#292f39;
-     --link:#ffa0a5;
-     --hover:#343d49;
-     --notice:#262d37;
-     --status:#424e5e;
-     --red:#b8242e;
-
-     position:fixed!important;
-     inset:3vh 3vw!important;
-     z-index:2147483601!important;
-     display:none;
-     flex-direction:column!important;
-     overflow:hidden!important;
-     border:1px solid var(--line)!important;
-     border-radius:14px!important;
-     background:var(--bg)!important;
-     color:var(--text)!important;
-     box-shadow:0 24px 90px #000d!important;
-     font:16px/1.5 system-ui,sans-serif!important;
-     color-scheme:dark!important;
-   }
-
-   #lssstat-root[data-theme="light"] {
-     --bg:#f3f5f8;
-     --panel:#fff;
-     --alt:#f5f7fa;
-     --head:#e5e9ee;
-     --text:#202631;
-     --muted:#64717e;
-     --line:#d3dbe5;
-     --input:#fff;
-     --link:#a6212e;
-     --hover:#e9edf2;
-     --notice:#e8edf3;
-     --status:#e1e6ed;
-
-     color-scheme:light!important;
-   }
-
-   #lssstat-root * {
-     box-sizing:border-box!important;
-   }
-
-   #lssstat-root header {
-     display:flex!important;
-     align-items:center!important;
-     justify-content:space-between!important;
-     gap:12px!important;
-     flex-wrap:wrap!important;
-     background:linear-gradient(
-       100deg,#b8242e,#751722
-     )!important;
-     color:#fff!important;
-     padding:12px 18px!important;
-   }
-
-   #lssstat-root h2 {
-     margin:0!important;
-     color:#fff!important;
-     font:700 21px system-ui!important;
-   }
-
-   #lssstat-root h3 {
-     color:var(--text)!important;
-     font-size:21px!important;
-     margin:15px 0 10px!important;
-   }
-
-   #lssstat-root button,
-   #lssstat-root input,
-   #lssstat-root select {
-     background:var(--input)!important;
-     color:var(--text)!important;
-     border:1px solid var(--line)!important;
-     border-radius:7px!important;
-     padding:8px 11px!important;
-     font:inherit!important;
-     min-height:34px!important;
-   }
-
-   #lssstat-root button {
-     cursor:pointer!important;
-     font-weight:650!important;
-   }
-
-   #lssstat-root button:disabled {
-     opacity:.45!important;
-     cursor:default!important;
-   }
-
-   #lssstat-root button:hover:not(:disabled) {
-     background:var(--hover)!important;
-     border-color:#d95662!important;
-   }
-
-   #lssstat-root button.primary,
-   #lssstat-root .tabs button.active {
-     background:var(--red)!important;
-     border-color:#e45760!important;
-     color:#fff!important;
-   }
-
-   #lssstat-root .toolbar,
-   #lssstat-root .tabs {
-     display:flex!important;
-     gap:8px!important;
-     flex-wrap:wrap!important;
-     align-items:center!important;
-     padding:10px 17px!important;
-     background:var(--panel)!important;
-     border-bottom:1px solid var(--line)!important;
-   }
-
-   #lssstat-root .body {
-     flex:1!important;
-     min-height:0!important;
-     overflow:auto!important;
-     background:var(--bg)!important;
-     color:var(--text)!important;
-     padding:16px 18px!important;
-   }
-
-   #lssstat-root .notice {
-     padding:10px 13px!important;
-     background:var(--notice)!important;
-     color:var(--text)!important;
-     border:1px solid var(--line)!important;
-     border-radius:8px!important;
-     margin-bottom:12px!important;
-   }
-
-   #lssstat-root .error {
-     border-color:#d24f5b!important;
-   }
-
-   #lssstat-root .muted {
-     color:var(--muted)!important;
-   }
-
-   #lssstat-root .metrics {
-     display:grid!important;
-     grid-template-columns:
-       repeat(auto-fit,minmax(175px,1fr))!important;
-     gap:12px!important;
-     margin:12px 0 22px!important;
-   }
-
-   #lssstat-root .metric,
-   #lssstat-root .chart {
-     background:var(--panel)!important;
-     color:var(--text)!important;
-     border:1px solid var(--line)!important;
-     border-radius:11px!important;
-     padding:15px!important;
-   }
-
-   #lssstat-root .metric strong {
-     display:block!important;
-     color:var(--text)!important;
-     font-size:29px!important;
-   }
-
-   #lssstat-root .tablebox {
-     max-width:100%!important;
-     overflow-x:auto!important;
-     border:1px solid var(--line)!important;
-     border-radius:9px!important;
-   }
-
-   #lssstat-root table {
-     width:100%!important;
-     border-collapse:collapse!important;
-     background:var(--panel)!important;
-     color:var(--text)!important;
-   }
-
-   #lssstat-root th,
-   #lssstat-root td {
-     padding:9px 11px!important;
-     text-align:left!important;
-     vertical-align:top!important;
-     color:var(--text)!important;
-     border-bottom:1px solid var(--line)!important;
-   }
-
-   #lssstat-root th {
-     background:var(--head)!important;
-     color:var(--text)!important;
-   }
-
-   #lssstat-root tr:nth-child(even) td {
-     background:var(--alt)!important;
-   }
-
-   #lssstat-root tr:hover td {
-     background:var(--hover)!important;
-   }
-
-   #lssstat-root .num {
-     text-align:right!important;
-     font-variant-numeric:tabular-nums!important;
-     white-space:nowrap!important;
-   }
-
-   #lssstat-root a,
-   #lssstat-root .linkbtn,
-   #lssstat-root summary {
-     color:var(--link)!important;
-     cursor:pointer!important;
-   }
-
-   #lssstat-root .linkbtn {
-     padding:0!important;
-     min-height:0!important;
-     border:0!important;
-     background:transparent!important;
-     text-decoration:underline!important;
-     font-weight:600!important;
-   }
-
-   #lssstat-root .pager {
-     display:flex!important;
-     justify-content:center!important;
-     align-items:center!important;
-     gap:12px!important;
-     margin:15px!important;
+     inset:0!important;
+     border-radius:0!important;
    }
 
    #lssstat-root .charts {
-     display:grid!important;
-     grid-template-columns:
-       repeat(auto-fit,minmax(340px,1fr))!important;
-     gap:13px!important;
-     margin:15px 0!important;
+     grid-template-columns:1fr!important;
    }
 
-   #lssstat-root .chartrow {
-     display:flex!important;
-     align-items:center!important;
-     gap:14px!important;
-     flex-wrap:wrap!important;
+   #lssstat-root .body {
+     padding:10px!important;
    }
 
-   #lssstat-root .donut {
-     width:180px!important;
-     height:180px!important;
-     border-radius:50%!important;
-     flex-shrink:0!important;
-     position:relative!important;
+   #lssstat-root table {
+     min-width:650px!important;
    }
-
-   #lssstat-root .donut:after {
-     content:''!important;
-     position:absolute!important;
-     inset:53px!important;
-     border-radius:50%!important;
-     background:var(--panel)!important;
-   }
-
-   #lssstat-root .legend {
-     flex:1!important;
-     min-width:165px!important;
-     max-height:300px!important;
-     overflow:auto!important;
-   }
-
-   #lssstat-root .legenditem {
-     display:flex!important;
-     align-items:flex-start!important;
-     gap:8px!important;
-     margin:6px 0!important;
-     font-size:14px!important;
-   }
-
-   #lssstat-root .swatch {
-     width:11px!important;
-     height:11px!important;
-     min-width:11px!important;
-     border-radius:3px!important;
-     margin-top:3px!important;
-   }
-
-   #lssstat-root details {
-     margin:3px 0!important;
-     color:var(--text)!important;
-   }
-
-   #lssstat-root .stat {
-     display:inline-block!important;
-     background:var(--status)!important;
-     color:var(--text)!important;
-     padding:3px 7px!important;
-     border-radius:5px!important;
-     font-weight:650!important;
-   }
-
-   #lssstat-root .subrow td {
-     font-size:13px!important;
-     color:var(--muted)!important;
-   }
-
-   #lssstat-root .indent {
-     padding-left:28px!important;
-   }
-
-   #lssstat-root .filterlabel {
-     font-weight:650!important;
-   }
-
-   @media(max-width:700px) {
-     #lssstat-root {
-       inset:0!important;
-       border-radius:0!important;
-     }
-
-     #lssstat-root .charts {
-       grid-template-columns:1fr!important;
-     }
-
-     #lssstat-root .body {
-       padding:10px!important;
-     }
-   }
-   /* ==========================================
-   SCHRIFTGRÖSSEN – ERWEITERUNGEN
-   ========================================== */
-
-   #lssstat-root .tablebox table th,
-   #lssstat-root .tablebox table td {
-     font-size: 18px !important;
-   }
-
-   #lssstat-root .linkbtn {
-    font-size: 18px !important;
-   }
-
-   #lssstat-root .subrow td {
-    font-size: 18px !important;
-   }
-
-   lssstat-root .notice {
-    font-size: 18px !important;
-   }
-
-   #lssstat-root .stat {
-    font-size: 18px !important;
-   }
-   `;
+ }
+ `;
 
     const style = document.createElement('style');
-    style.textContent = css;
+    style.textContent = CSS;
     document.head.append(style);
 
     // ==========================================
     // BENUTZEROBERFLÄCHE
     // ==========================================
 
-    // ==========================================
-    // STATISTIK-BUTTON IN DER NAVIGATIONSLEISTE
-    // ==========================================
-
     const launcher = document.createElement('button');
-
     launcher.id = 'lssstat-launcher';
     launcher.type = 'button';
     launcher.textContent = '📊 Statistik';
 
-    // Navigationsleiste suchen
+    const navItem = document.createElement('li');
+    navItem.id = 'lssstat-nav-item';
+    navItem.append(launcher);
+
     const navbar = document.querySelector(
         '#navbar-main-collapse > ul'
     );
 
     if (navbar) {
-        // Listenelement erstellen
-        const listItem = document.createElement('li');
-
-        listItem.id = 'lssstat-nav-item';
-        listItem.appendChild(launcher);
-
-        // Button in die Navigationsleiste einfügen
-        navbar.appendChild(listItem);
-
+        navbar.append(navItem);
     } else {
-        // Fallback, falls sich die Website-Struktur ändert
-        console.warn(
-            '[LSS Statistik] Navigationsleiste nicht gefunden.'
-        );
-
-        // Button weiterhin erreichbar halten
-        launcher.style.position = 'fixed';
-        launcher.style.left = '18px';
-        launcher.style.bottom = '18px';
-        launcher.style.zIndex = '2147483600';
-        launcher.style.background = '#b8242e';
-
-        document.body.appendChild(launcher);
+        navItem.classList.add('lssstat-fallback');
+        document.body.append(navItem);
     }
 
     const root = document.createElement('section');
-
     root.id = 'lssstat-root';
     root.setAttribute('role', 'dialog');
     root.setAttribute(
@@ -674,58 +615,55 @@
     );
 
     root.innerHTML = `
-     <header>
-       <h2>📊 LSS Statistik-Dashboard</h2>
-       <button id="lssstat-close">
-         ✕ Schließen
-       </button>
-     </header>
+   <header>
+     <h2>📊 LSS Statistik-Dashboard</h2>
+     <button id="lssstat-close">✕ Schließen</button>
+   </header>
 
-     <div class="toolbar">
-       <button id="lssstat-load" class="primary">
-         Daten laden / aktualisieren
-       </button>
+   <div class="toolbar">
+     <button class="primary" id="lssstat-load">
+       Daten laden / aktualisieren
+     </button>
 
-       <button id="lssstat-cancel" disabled>
-         Abbrechen
-       </button>
+     <button id="lssstat-cancel" disabled>
+       Abbrechen
+     </button>
 
-       <button id="lssstat-export" disabled>
-         CSV exportieren
-       </button>
+     <button id="lssstat-export" disabled>
+       CSV exportieren
+     </button>
 
-       <input
-         id="lssstat-search"
-         placeholder="Tabelle durchsuchen ..."
-       >
+     <input
+       id="lssstat-search"
+       placeholder="Tabelle durchsuchen ..."
+     >
 
-       <span class="muted" id="lssstat-progress">
-         Noch nicht geladen
-       </span>
-     </div>
+     <span id="lssstat-progress" class="muted">
+       Noch nicht geladen
+     </span>
+   </div>
 
-     <nav class="tabs"></nav>
-
-     <main class="body" id="lssstat-content"></main>
-   `;
+   <nav class="tabs"></nav>
+   <main class="body" id="lssstat-content"></main>
+ `;
 
     document.body.append(root);
 
-    const $ = sel => root.querySelector(sel);
+    const $ = s => root.querySelector(s);
 
-    const progress = msg => {
-        $('#lssstat-progress').textContent = msg;
+    const progress = s =>
+    $('#lssstat-progress').textContent = s;
+
+    const theme = () => {
+        root.dataset.theme =
+            document.body.classList.contains('dark')
+            ? 'dark'
+        : 'light';
     };
 
     const clearSearch = () => {
         state.search = '';
         $('#lssstat-search').value = '';
-    };
-
-    const theme = () => {
-        root.dataset.theme = document.body.classList.contains('dark')
-            ? 'dark'
-        : 'light';
     };
 
     launcher.onclick = () => {
@@ -741,12 +679,12 @@
     $('#lssstat-load').onclick = load;
 
     $('#lssstat-cancel').onclick = () =>
-    state.abort?.abort();
+    state.loadAbort?.abort();
 
     $('#lssstat-export').onclick = exportCSV;
 
-    $('#lssstat-search').oninput = ev => {
-        state.search = ev.target.value;
+    $('#lssstat-search').oninput = e => {
+        state.search = e.target.value;
         state.page = 0;
         render();
     };
@@ -754,45 +692,52 @@
     document.addEventListener('keydown', e => {
         if (
             e.key === 'Escape' &&
-            root.style.display === 'flex'
+            root.style.display === 'flex' &&
+            !state.writing
         ) {
             root.style.display = 'none';
         }
     });
 
+    new MutationObserver(theme).observe(
+        document.body,
+        {
+            attributes: true,
+            attributeFilter: ['class']
+        }
+    );
+
     // ==========================================
-    // API
+    // NETZWERKANFRAGEN
     // ==========================================
 
-    function external(url) {
-        return new Promise((resolve, reject) =>
-                           GM_xmlhttpRequest({
-            method: 'GET',
-            url,
-            timeout: 18000,
+    const external = url =>
+    new Promise((ok, fail) =>
+                GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        timeout: 18000,
 
-            onload: r => {
-                try {
-                    if (r.status !== 200) {
-                        throw Error('HTTP ' + r.status);
-                    }
-
-                    resolve(JSON.parse(r.responseText));
-                } catch (e) {
-                    reject(e);
+        onload: r => {
+            try {
+                if (r.status !== 200) {
+                    throw Error(`HTTP ${r.status}`);
                 }
-            },
+                ok(JSON.parse(r.responseText));
+            } catch (e) {
+                fail(e);
+            }
+        },
 
-            onerror: () =>
-            reject(Error('Metadaten-Netzwerkfehler')),
+        onerror: () =>
+        fail(Error('Metadaten-Netzwerkfehler')),
 
-            ontimeout: () =>
-            reject(Error('Metadaten-Timeout'))
-        })
-                          );
-    }
+        ontimeout: () =>
+        fail(Error('Metadaten-Timeout'))
+    })
+               );
 
-    async function fetchJSON(path, signal) {
+    async function fetchJSON(url, signal) {
         let last;
 
         for (let i = 0; i < 3; i++) {
@@ -801,17 +746,13 @@
             }
 
             try {
-                const timeout = AbortSignal.timeout(30000);
-
-                const r = await fetch(path, {
+                const r = await fetch(url, {
                     credentials: 'same-origin',
                     cache: 'no-store',
-
                     signal: AbortSignal.any([
                         signal,
-                        timeout
+                        AbortSignal.timeout(30000)
                     ]),
-
                     headers: {
                         Accept: 'application/json'
                     }
@@ -825,13 +766,10 @@
 
             } catch (e) {
                 if (signal.aborted) throw e;
-
                 last = e;
 
                 if (i < 2) {
-                    await new Promise(resolve =>
-                                      setTimeout(resolve, 700 * (i + 1))
-                                     );
+                    await sleep(700 * (i + 1));
                 }
             }
         }
@@ -839,10 +777,10 @@
         throw last;
     }
 
-    function nextPage(path) {
-        if (!path) return null;
+    function safeNext(url) {
+        if (!url) return null;
 
-        const u = new URL(path, location.origin);
+        const u = new URL(url, location.origin);
 
         if (
             u.origin !== location.origin ||
@@ -863,10 +801,9 @@
              ? '&include_image_url=false'
              : '');
 
-        const result = [];
-        const visited = new Set();
+        const rows = [];
         const ids = new Set();
-
+        const pages = new Set();
         let total = null;
 
         for (
@@ -874,18 +811,16 @@
             url && page <= 10000;
             page++
         ) {
-            if (visited.has(url)) {
-                throw Error('Wiederholte Seite bei ' + kind);
+            if (pages.has(url)) {
+                throw Error('Wiederholte API-Seite');
             }
 
-            visited.add(url);
+            pages.add(url);
 
             progress(
-                `${kind === 'vehicles'
-                ? 'Fahrzeuge'
-                : 'Gebäude'}: Seite ${page} – ` +
-                `${fmt(result.length)} geladen`
-       );
+                `${kind === 'vehicles' ? 'Fahrzeuge' : 'Gebäude'}: ` +
+                `Seite ${page}, ${fmt(rows.length)} geladen`
+     );
 
             const data = await fetchJSON(url, signal);
 
@@ -894,9 +829,7 @@
             : data.result;
 
             if (!Array.isArray(list)) {
-                throw Error(
-                    'Unerwartetes API-Format bei ' + kind
-                );
+                throw Error('Unerwartetes API-Format');
             }
 
             const paging =
@@ -904,27 +837,24 @@
 
             if (
                 paging.count_total != null &&
-                Number.isFinite(Number(paging.count_total))
+                Number.isFinite(+paging.count_total)
             ) {
-                total = Number(paging.count_total);
+                total = +paging.count_total;
             }
 
             for (const row of list) {
-                if (row?.id == null) {
-                    throw Error('Datensatz ohne ID');
+                if (
+                    row?.id == null ||
+                    ids.has(String(row.id))
+                ) {
+                    throw Error('Ungültige oder doppelte ID');
                 }
 
-                const id = String(row.id);
-
-                if (ids.has(id)) {
-                    throw Error('Doppelte ID ' + id);
-                }
-
-                ids.add(id);
-                result.push(row);
+                ids.add(String(row.id));
+                rows.push(row);
             }
 
-            url = nextPage(paging.next_page);
+            url = safeNext(paging.next_page);
 
             if (!list.length && url) {
                 throw Error('Leere Folgeseite');
@@ -933,12 +863,11 @@
             if (
                 !url &&
                 total !== null &&
-                total !== result.length
+                rows.length !== total
             ) {
                 throw Error(
-                    `Unvollständige Antwort: ` +
-                    `${result.length}/${total}`
-         );
+                    `Unvollständige Antwort: ${rows.length}/${total}`
+       );
             }
 
             if (
@@ -946,19 +875,21 @@
                 total === null &&
                 list.length === PAGE_LIMIT
             ) {
-                throw Error('Paginierung nicht prüfbar');
-            }
-
-            if (page === 10000 && url) {
-                throw Error('Zu viele Seiten');
+                throw Error(
+                    'Vollständigkeit nicht prüfbar'
+                );
             }
         }
 
-        return result;
+        if (url) {
+            throw Error('Zu viele Seiten');
+        }
+
+        return rows;
     }
 
     // ==========================================
-    // DATENVERARBEITUNG
+    // STATISTIKMODELL
     // ==========================================
 
     function compile(
@@ -967,29 +898,24 @@
      bmeta,
      vmeta
     ) {
-        const byBuilding = new Map();
         const stations = [];
+        const byBuilding = new Map();
+        const families = new Map();
+        const centers = new Map();
+        const extensions = new Map();
         const vehicleByType = new Map();
-        const compactVehicles = [];
-
-        const types = {
-            building: {},
-            vehicle: {}
-        };
 
         const groups = {
             building: {},
             vehicle: {}
         };
 
-        const families = new Map();
-        const centers = new Map();
-        const extensions = new Map();
-
         let missing = 0;
-        let extensionEntries = 0;
 
-        // Gebäude und Erweiterungen auswerten
+        const metaExt = type =>
+        bmeta[type]?.extensions;
+
+        // Gebäude
         for (const b of buildings) {
             const typeId = String(b.building_type);
 
@@ -997,49 +923,82 @@
                   bmeta[typeId]?.caption ||
                   `Gebäudetyp ${typeId}`;
 
-            const family = familyOf(b, type);
+            const f = FAMILIES[typeId];
+            const org = orgFor(typeId, type);
 
-            const center =
-                  idOf(b.leitstelle_building_id) || 'ohne';
+            const familyKey =
+                  f?.[0] || `type:${typeId}`;
+
+            const familyName =
+                  f?.[1] || type;
+
+            const small = Boolean(
+                b.small_building === true ||
+                f?.[3]
+            );
+
+            const center = String(
+                b.leitstelle_building_id ?? 'ohne'
+            );
 
             const st = {
                 id: String(b.id),
                 name: String(
                     b.caption || `Gebäude ${b.id}`
-         ),
+       ),
                 type,
                 typeId,
-                org: family.org,
-                familyKey: family.key,
-                familyName: family.label,
-                small: family.small,
+                org,
+                familyKey,
+                familyName,
+                small,
                 center,
                 vehicles: 0,
+                personal: Number(b.personal_count) || 0,
+                extBought: 0,
+                extActive: 0,
                 byType: {}
             };
 
             stations.push(st);
             byBuilding.set(st.id, st);
 
-            inc(types.building, type);
-            inc(groups.building, st.org);
+            inc(groups.building, org);
 
-            // Normale Wachen und Kleinwachen
-            if (!families.has(family.key)) {
-                families.set(family.key, {
-                    key: family.key,
-                    name: family.label,
-                    org: family.org,
+            // Gebäudefamilien
+            if (!families.has(familyKey)) {
+                families.set(familyKey, {
+                    key: familyKey,
+                    name: familyName,
+                    org,
                     count: 0,
-                    small: 0,
-                    normal: 0
+
+                    normal: {
+                        count: 0,
+                        vehicles: 0,
+                        personal: 0,
+                        active: 0,
+                        bought: 0
+                    },
+
+                    small: {
+                        count: 0,
+                        vehicles: 0,
+                        personal: 0,
+                        active: 0,
+                        bought: 0
+                    }
                 });
             }
 
-            const fam = families.get(family.key);
-
+            const fam = families.get(familyKey);
             fam.count++;
-            fam[st.small ? 'small' : 'normal']++;
+
+            const part =
+                  fam[small ? 'small' : 'normal'];
+
+            part.count++;
+            part.personal += st.personal;
 
             // Leitstellen
             if (!centers.has(center)) {
@@ -1054,77 +1013,91 @@
 
             const c = centers.get(center);
             c.buildings++;
-
             inc(c.byBuilding, type);
 
             // Erweiterungen
             const seen = new Set();
 
-            const buildingExtensions =
-                  Array.isArray(b.extensions)
-            ? b.extensions
-            : [];
-
-            for (const x of buildingExtensions) {
-                if (
-                    !x ||
-                    typeof x !== 'object'
-                ) continue;
-
-                const xid = idOf(x.type_id);
+            for (
+                const x of Array.isArray(b.extensions)
+                ? b.extensions
+                : []
+            ) {
+                if (!x || typeof x !== 'object') {
+                    continue;
+                }
 
                 const caption = String(
                     x.caption ||
-                    (xid === null
-                     ? 'Unbekannte Erweiterung'
-                     : `Erweiterung ${xid}`)
-                );
+                    `Erweiterung ${x.type_id ?? '?'}`
+       );
 
-                const extKey =
-                      `${family.key}::${low(caption)}`;
+                const typeKey =
+                      String(x.type_id ?? '?');
 
-                const unique =
-                      `${xid ?? '?'}::${low(caption)}`;
+                const key =
+                      `${familyKey}::${typeId}::${typeKey}`;
 
-                if (seen.has(unique)) continue;
+                if (seen.has(key)) continue;
+                seen.add(key);
 
-                seen.add(unique);
+                // Der Index der Schreibroute ist nicht
+                // zwingend mit type_id identisch.
+                const definitions = metaExt(typeId);
+                let index = null;
 
-                if (!extensions.has(extKey)) {
-                    extensions.set(extKey, {
-                        key: extKey,
+                if (Array.isArray(definitions)) {
+                    const matches = definitions
+                    .map((m, i) => ({ m, i }))
+                    .filter(({ m }) =>
+                            m && String(m.caption) === caption
+                           );
+
+                    if (matches.length === 1) {
+                        index = matches[0].i;
+                    }
+                }
+
+                if (!extensions.has(key)) {
+                    extensions.set(key, {
+                        key,
                         caption,
-                        familyKey: family.key,
-                        familyName: family.label,
-                        org: st.org,
-                        bought: 0,
-                        active: 0,
+                        org,
+                        familyKey,
+                        familyName,
+                        typeId,
+                        typeKey,
                         sites: []
                     });
                 }
 
-                const ex = extensions.get(extKey);
+                const ex = extensions.get(key);
 
-                const active =
-                      x.available === true &&
-                      x.enabled === true;
-
-                ex.bought++;
-
-                if (active) ex.active++;
-
-                ex.sites.push({
+                const site = {
                     buildingId: st.id,
                     center,
-                    status: statusName(x),
-                    active
-                });
+                    available: x.available === true,
+                    enabled: x.enabled === true,
+                    metaIndex: index,
+                    caption,
+                    typeKey
+                };
 
-                extensionEntries++;
+                ex.sites.push(site);
+
+                st.extBought++;
+                part.bought++;
+
+                if (site.available && site.enabled) {
+                    st.extActive++;
+                    part.active++;
+                }
             }
         }
 
-        // Fahrzeuge auswerten
+        // Fahrzeuge
+        const compactVehicles = [];
+
         for (const v of vehicles) {
             const typeId = String(v.vehicle_type);
 
@@ -1132,14 +1105,16 @@
                   vmeta[typeId]?.caption ||
                   `Fahrzeugtyp ${typeId}`;
 
-            const buildingId = idOf(v.building_id);
+            const buildingId =
+                  String(v.building_id ?? '');
+
             const st = byBuilding.get(buildingId);
 
             const cv = {
                 id: String(v.id),
                 name: String(
                     v.caption || `${type} #${v.id}`
-         ),
+       ),
                 type,
                 typeId,
                 buildingId,
@@ -1158,8 +1133,6 @@
 
             vehicleByType.get(typeId).push(cv);
 
-            inc(types.vehicle, type);
-
             inc(
                 groups.vehicle,
                 st?.org || 'Weitere'
@@ -1169,8 +1142,12 @@
                 st.vehicles++;
                 inc(st.byType, type);
 
-                const c = centers.get(st.center);
+                families
+                    .get(st.familyKey)[
+                    st.small ? 'small' : 'normal'
+                ].vehicles++;
 
+                const c = centers.get(st.center);
                 c.vehicles++;
                 inc(c.byVehicle, type);
 
@@ -1179,29 +1156,23 @@
             }
         }
 
-        const centerRows =
-              [...centers.values()].map(c => ({
-                  ...c,
-
-                  name: c.id === 'ohne'
-                  ? 'Ohne Leitstellenzuordnung'
-                  : byBuilding.get(c.id)?.name ||
-                  `Leitstelle ${c.id}`
-       }));
-
         return {
-            buildings: buildings.length,
-            vehicles: vehicles.length,
             stations,
             byBuilding,
+            families: [...families.values()],
+            centers: [...centers.values()].map(c => ({
+                ...c,
+                name: c.id === 'ohne'
+                ? 'Ohne Leitstellenzuordnung'
+                : byBuilding.get(c.id)?.name ||
+                `Leitstelle ${c.id}`
+     })),
+            extensions: [...extensions.values()],
             vehicleByType,
             compactVehicles,
-            types,
             groups,
-            families: [...families.values()],
-            centers: centerRows,
-            extensions: [...extensions.values()],
-            extensionEntries,
+            buildings: buildings.length,
+            vehicles: vehicles.length,
             missing,
             loadedAt: new Date(),
             warnings: []
@@ -1213,18 +1184,18 @@
     // ==========================================
 
     async function load() {
-        if (state.busy) return;
+        if (state.loading || state.writing) return;
 
-        state.busy = true;
-        state.abort = new AbortController();
+        state.loading = true;
+        state.loadAbort = new AbortController();
 
         $('#lssstat-load').disabled = true;
         $('#lssstat-cancel').disabled = false;
 
-        progress('Starte Datenabruf ...');
+        progress('Lade ...');
 
         try {
-            const metas = await Promise.allSettled([
+            const meta = await Promise.allSettled([
                 external(
                     'https://api.lss-manager.de/de_DE/buildings'
                 ),
@@ -1234,65 +1205,61 @@
             ]);
 
             const bm =
-                  metas[0].status === 'fulfilled'
-            ? metas[0].value
+                  meta[0].status === 'fulfilled'
+            ? meta[0].value
             : {};
 
             const vm =
-                  metas[1].status === 'fulfilled'
-            ? metas[1].value
+                  meta[1].status === 'fulfilled'
+            ? meta[1].value
             : {};
 
-            const buildings = await allPages(
+            const b = await allPages(
                 'buildings',
-                state.abort.signal
+                state.loadAbort.signal
             );
 
-            const vehicles = await allPages(
+            const v = await allPages(
                 'vehicles',
-                state.abort.signal
+                state.loadAbort.signal
             );
 
-            if (state.abort.signal.aborted) {
+            if (state.loadAbort.signal.aborted) {
                 throw Error('Abgebrochen');
             }
 
-            const d = compile(
-                buildings,
-                vehicles,
-                bm,
-                vm
-            );
+            const d = compile(b, v, bm, vm);
 
             if (
-                metas.some(m => m.status !== 'fulfilled')
+                meta.some(x => x.status === 'rejected')
             ) {
                 d.warnings.push(
-                    'Einige Typbezeichnungen konnten nicht ' +
-                    'geladen werden; IDs werden verwendet.'
+                    'Metadaten teilweise nicht geladen. ' +
+                    'Erweiterungen ohne eindeutige Zuordnung ' +
+                    'sind nicht schaltbar.'
                 );
             }
 
             if (d.missing) {
                 d.warnings.push(
-                    `${fmt(d.missing)} Fahrzeuge konnten ` +
-                    'keiner Wache zugeordnet werden.'
-                );
+                    `${fmt(d.missing)} Fahrzeuge ohne bekannte Wache.`
+       );
             }
 
             state.data = d;
+            state.writeNeedsRefresh = false;
             state.detail = null;
             state.page = 0;
 
-            state.openBuildings.clear();
-            state.openExtensions.clear();
+            state.openB.clear();
+            state.openE.clear();
 
             clearSearch();
 
             progress(
                 `Fertig: ${fmt(d.buildings)} Gebäude, ` +
                 `${fmt(d.vehicles)} Fahrzeuge`
-       );
+     );
 
             render();
 
@@ -1301,15 +1268,15 @@
 
             $('#lssstat-content').insertAdjacentHTML(
                 'afterbegin',
-                `<div class="notice error">` +
-                `${esc(e.message)}. ` +
-                `Vorherige Statistik bleibt erhalten.` +
-                `</div>`
-       );
+                `<div class="notice error">
+         ${esc(e.message)} –
+         vorherige Statistik bleibt erhalten.
+       </div>`
+     );
 
         } finally {
-            state.busy = false;
-            state.abort = null;
+            state.loading = false;
+            state.loadAbort = null;
 
             $('#lssstat-load').disabled = false;
             $('#lssstat-cancel').disabled = true;
@@ -1317,7 +1284,7 @@
     }
 
     // ==========================================
-    // TABS
+    // TABS UND TABELLEN
     // ==========================================
 
     const tabs = [
@@ -1329,51 +1296,78 @@
         ['centers', 'Leitstellenbereiche']
     ];
 
-    function detailEntries(obj) {
-        const entries = sorted(obj);
-
-        if (!entries.length) return '—';
-
+    function table(headers, body, widths = []) {
         return `
-       <details>
-         <summary>
-           Zusammensetzung (${entries.length} Typen)
-         </summary>
+     <div class="tablebox">
+       <table>
+         <colgroup>
+           ${headers.map((_, i) => `
+             <col style="width:${
+               widths[i] ||
+                         (100 / headers.length) + '%'
+                         }">
+           `).join('')}
+         </colgroup>
 
-         ${entries.map(([name, n]) => `
-           <div>
-             ${esc(name)}: <b>${fmt(n)}</b>
-           </div>
-         `).join('')}
-       </details>
-     `;
-    }
-
-    function simpleTable(obj) {
-        return `
-       <div class="tablebox">
-         <table>
-           <thead>
-             <tr>
-               <th>Organisation</th>
-               <th class="num">Anzahl</th>
-             </tr>
-           </thead>
-
-           <tbody>
-             ${sorted(obj).map(([name, n]) => `
-               <tr>
-                 <td>${esc(name)}</td>
-                 <td class="num">${fmt(n)}</td>
-               </tr>
+         <thead>
+           <tr>
+             ${headers.map(([t, n]) => `
+               <th class="${n ? 'num' : ''}">
+                 ${esc(t)}
+               </th>
              `).join('')}
-           </tbody>
-         </table>
-       </div>
-     `;
+           </tr>
+         </thead>
+
+         <tbody>${body}</tbody>
+       </table>
+     </div>
+   `;
     }
 
-    function filtered(rows) {
+    function pager(n) {
+        const pages = Math.max(
+            1,
+            Math.ceil(n / PAGE_ROWS)
+        );
+
+        state.page = Math.max(
+            0,
+            Math.min(state.page, pages - 1)
+        );
+
+        return `
+     <div class="pager">
+       <button
+         data-step="-1"
+         ${state.page === 0 ? 'disabled' : ''}
+       >← Zurück</button>
+
+       Seite ${fmt(state.page + 1)} / ${fmt(pages)}
+
+       <button
+         data-step="1"
+         ${state.page >= pages - 1
+            ? 'disabled'
+        : ''}
+       >Weiter →</button>
+     </div>
+   `;
+    }
+
+    function pageRows(rows) {
+        const pageCtl = pager(rows.length);
+
+        return {
+            items: rows.slice(
+                state.page * PAGE_ROWS,
+                (state.page + 1) * PAGE_ROWS
+            ),
+            pageCtl
+        };
+    }
+
+    function filter(rows) {
         const q = low(state.search.trim());
 
         if (!q) return rows;
@@ -1384,84 +1378,76 @@
             r.type,
             r.org,
             r.id,
-            r.center,
             r.caption,
-            r.familyName
+            r.familyName,
+            r.center
         ].some(x => low(x).includes(q))
                           );
     }
 
-    function pager(total) {
-        const pages = Math.max(
-            1,
-            Math.ceil(total / PAGE_ROWS)
-        );
+    function detailEntries(o, label) {
+        const e = sorted(o);
 
-        state.page = Math.max(
-            0,
-            Math.min(state.page, pages - 1)
-        );
+        if (!e.length) return '—';
 
         return `
-       <div class="pager">
-         <button
-           data-step="-1"
-           ${state.page === 0 ? 'disabled' : ''}
-         >← Zurück</button>
+     <details>
+       <summary>
+         ${esc(label)} (${e.length} Typen)
+       </summary>
 
-         Seite ${fmt(state.page + 1)} / ${fmt(pages)}
-
-         <button
-           data-step="1"
-           ${state.page >= pages - 1
-            ? 'disabled'
-        : ''}
-         >Weiter →</button>
-       </div>
-     `;
-    }
-
-    function paged(rows) {
-        const controls = pager(rows.length);
-
-        return {
-            controls,
-
-            page: rows.slice(
-                state.page * PAGE_ROWS,
-                (state.page + 1) * PAGE_ROWS
-            )
-        };
-    }
-
-    const table = (headers, body) => `
-     <div class="tablebox">
-       <table>
-         <thead>
-           <tr>
-             ${headers.map(([label, num]) => `
-               <th${num ? ' class="num"' : ''}>
-                 ${label}
-               </th>
-             `).join('')}
-           </tr>
-         </thead>
-
-         <tbody>${body}</tbody>
-       </table>
-     </div>
+       ${e.map(([n, v]) => `
+         <div>
+           ${esc(n)}: <b>${fmt(v)}</b>
+         </div>
+       `).join('')}
+     </details>
    `;
-
-    // ==========================================
-    // GEBÄUDETYPEN – NORMALE UND KLEINWACHEN
-    // ==========================================
+    }
 
     function familyRows() {
-        return state.data.families
-            .map(f => ({
+        return state.data.families.map(f => ({
             ...f,
-            id: f.key
-        }))
+            vehicles:
+            f.normal.vehicles + f.small.vehicles,
+            personal:
+            f.normal.personal + f.small.personal,
+            active:
+            f.normal.active + f.small.active,
+            bought:
+            f.normal.bought + f.small.bought
+        })).sort(
+            (a, b) =>
+            b.count - a.count ||
+            a.name.localeCompare(b.name, 'de')
+        );
+    }
+
+    function vehicleRows() {
+        return [...state.data.vehicleByType]
+            .map(([id, vs]) => {
+            const buildings = new Set(
+                vs.map(v => v.buildingId)
+                .filter(id =>
+                        state.data.byBuilding.has(id)
+                       )
+            );
+
+            return {
+                id,
+                name: vs[0].type,
+                count: vs.length,
+                status2: vs.filter(
+                    v => String(v.status) === '2'
+                ).length,
+                status6: vs.filter(
+                    v => String(v.status) === '6'
+                ).length,
+                avg: buildings.size
+                ? vs.length / buildings.size
+                : null
+            };
+        })
             .sort(
             (a, b) =>
             b.count - a.count ||
@@ -1470,7 +1456,7 @@
     }
 
     // ==========================================
-    // KREISDIAGRAMME
+    // INTERAKTIVE SVG-KREISDIAGRAMME
     // ==========================================
 
     function chartData(org, kind) {
@@ -1481,10 +1467,9 @@
             for (const f of state.data.families) {
                 if (f.org === org) {
                     inc(counts, f.name, f.count);
-                    inc(small, f.name, f.small);
+                    inc(small, f.name, f.small.count);
                 }
             }
-
         } else {
             for (const v of state.data.compactVehicles) {
                 const st = state.data.byBuilding.get(
@@ -1498,7 +1483,6 @@
         }
 
         const rows = [];
-
         let other = 0;
         let otherSmall = 0;
 
@@ -1506,7 +1490,6 @@
             if (n < MIN_CHART_COUNT) {
                 other += n;
                 otherSmall += small[name] || 0;
-
             } else {
                 rows.push({
                     name,
@@ -1527,166 +1510,740 @@
         return rows;
     }
 
+    function arcPath(a, b) {
+        const r = 88;
+        const cx = 110;
+        const cy = 110;
+
+        const pos = t => [
+            cx + r * Math.cos(t),
+            cy + r * Math.sin(t)
+        ];
+
+        const start =
+              a * 2 * Math.PI - Math.PI / 2;
+
+        const end =
+              b * 2 * Math.PI - Math.PI / 2;
+
+        const p1 = pos(start);
+        const p2 = pos(end);
+
+        return `
+     M ${cx} ${cy}
+     L ${p1[0]} ${p1[1]}
+     A ${r} ${r} 0 ${b - a > .5 ? 1 : 0} 1
+       ${p2[0]} ${p2[1]}
+     Z
+   `;
+    }
+
     function chart(org, kind) {
         const rows = chartData(org, kind);
 
-        const sum = rows.reduce(
-            (a, r) => a + r.n,
+        const total = rows.reduce(
+            (s, r) => s + r.n,
             0
         );
 
-        if (!sum) {
+        if (!total) {
             return `
-         <section class="chart">
-           <h3>${esc(org)}</h3>
-           <span class="muted">Keine Einträge</span>
-         </section>
-       `;
+       <section class="chart">
+         <h3>${esc(org)}</h3>
+         Keine Einträge
+       </section>
+     `;
         }
 
-        let acc = 0;
+        let start = 0;
 
-        const parts = rows.map((r, i) => {
-            const start = acc / sum * 100;
+        const paths = rows.map((r, i) => {
+            const a = start;
+            start += r.n / total;
+            const b = start;
 
-            acc += r.n;
+            if (rows.length === 1) {
+                return `
+         <circle
+           class="pie-segment"
+           data-slice="${i}"
+           cx="110" cy="110" r="88"
+           fill="${COLORS[i % COLORS.length]}"
+         ></circle>
+       `;
+            }
 
-            return (
-                `${COLORS[i % COLORS.length]} ` +
-                `${start.toFixed(5)}% ` +
-                `${(acc / sum * 100).toFixed(5)}%`
-       );
-        });
+            return `
+       <path
+         class="pie-segment"
+         data-slice="${i}"
+         d="${arcPath(a, b)}"
+         fill="${COLORS[i % COLORS.length]}"
+       ></path>
+     `;
+        }).join('');
 
-        const gradient = rows.length === 1
-        ? COLORS[0]
-        : `conic-gradient(${parts.join(',')})`;
+        return `
+     <section
+       class="chart"
+       data-chart="${esc(org)}"
+     >
+       <h3>
+         ${esc(org)}
+         <span class="muted">
+           (${fmt(total)})
+         </span>
+       </h3>
 
-        const display = n =>
-        state.mode === 'relative'
-        ? (n / sum * 100).toLocaleString(
+       <div class="chartrow">
+         <svg
+           class="pie"
+           viewBox="0 0 220 220"
+           role="img"
+           aria-label="Kreisdiagramm ${esc(org)}"
+         >
+           ${paths}
+
+           <circle
+             cx="110" cy="110" r="51"
+             fill="var(--panel)"
+             pointer-events="none"
+           ></circle>
+
+           <text
+             class="pie-center"
+             x="110" y="107"
+             fill="var(--text)"
+             font-size="13"
+             text-anchor="middle"
+             pointer-events="none"
+           >${fmt(total)} gesamt</text>
+
+           <text
+             class="pie-value"
+             x="110" y="130"
+             fill="var(--text)"
+             font-size="13"
+             text-anchor="middle"
+             pointer-events="none"
+           ></text>
+         </svg>
+
+         <div class="legend">
+           ${rows.map((r, i) => `
+             <div
+               class="legenditem"
+               data-slice="${i}"
+             >
+               <span
+                 class="swatch"
+                 style="background:${
+                   COLORS[i % COLORS.length]
+                      }"
+               ></span>
+
+               <span>
+                 ${esc(r.name)}:
+                 <b>
+                   ${state.mode === 'relative'
+                      ? (100 * r.n / total).toLocaleString(
             'de-DE',
             { maximumFractionDigits: 2 }
         ) + ' %'
-        : fmt(n);
+                      : fmt(r.n)}
+                 </b>
 
-        return `
-       <section class="chart">
-         <h3>
-           ${esc(org)}
-           <span class="muted">(${fmt(sum)})</span>
-         </h3>
-
-         <div class="chartrow">
-           <div
-             class="donut"
-             style="background:${gradient}"
-             role="img"
-             aria-label="Kreisdiagramm ${esc(org)}"
-           ></div>
-
-           <div class="legend">
-             ${rows.map((r, i) => `
-               <div class="legenditem">
-                 <span
-                   class="swatch"
-                   style="background:
-                     ${COLORS[i % COLORS.length]}"
-                 ></span>
-
-                 <span>
-                   ${esc(r.name)}:
-                   <b>${display(r.n)}</b>
-
-                   ${kind === 'buildingtypes' && r.small
-                        ? `
-    <div class="muted">
-      davon ${state.mode === 'relative'
-                        ? (r.small / r.n * 100).toLocaleString(
-            'de-DE',
-            { maximumFractionDigits: 2 }
-        ) + ' % Kleinwachen'
-                        : fmt(r.small) + ' Kleinwachen'}
-    </div>
-  `
-  : ''}
-                 </span>
-               </div>
-             `).join('')}
-           </div>
+                 ${kind === 'buildingtypes' && r.small
+                      ? `
+                     <div class="muted">
+                       davon ${
+                         state.mode === 'relative'
+                      ? (100 * r.small / r.n)
+                      .toLocaleString('de-DE', {
+            maximumFractionDigits: 2
+        }) + ' %'
+                      : fmt(r.small)
+                      } Kleinwachen
+                     </div>
+                   `
+                   : ''}
+               </span>
+             </div>
+           `).join('')}
          </div>
-       </section>
-     `;
-    }
-
-    function chartControls() {
-        return `
-       <div
-         class="toolbar"
-         style="margin:10px 0"
-       >
-         <button
-           id="lssstat-charts"
-           class="${state.charts ? 'primary' : ''}"
-         >
-           ${state.charts
-            ? 'Diagramme ausblenden'
-        : 'Kuchendiagramme anzeigen'}
-         </button>
-
-         ${state.charts ? `
-           <span>Anzeige:</span>
-
-           <button
-             data-mode="absolute"
-             class="${state.mode === 'absolute'
-            ? 'primary'
-        : ''}"
-           >Absolut</button>
-
-           <button
-             data-mode="relative"
-             class="${state.mode === 'relative'
-            ? 'primary'
-        : ''}"
-           >Relativ (100 %)</button>
-
-           <span class="muted">
-             Typen unter ${MIN_CHART_COUNT}
-             → Sonstige
-           </span>
-         ` : ''}
        </div>
 
+       <div class="chart-focus muted">
+         Über ein Segment oder die Legende fahren.
+       </div>
+     </section>
+   `;
+    }
+
+    function charts() {
+        return `
+     <div
+       class="toolbar"
+       style="margin:10px 0"
+     >
+       <button
+         id="lssstat-charts"
+         class="${state.charts ? 'primary' : ''}"
+       >
+         ${state.charts
+            ? 'Diagramme ausblenden'
+        : 'Kuchendiagramme anzeigen'}
+       </button>
+
        ${state.charts ? `
-         <div class="charts">
-           ${ORGS.map(o =>
-                      chart(o, state.tab)
-                     ).join('')}
-         </div>
+         <button
+           data-mode="absolute"
+           class="${state.mode === 'absolute'
+            ? 'primary' : ''}"
+         >Absolut</button>
+
+         <button
+           data-mode="relative"
+           class="${state.mode === 'relative'
+            ? 'primary' : ''}"
+         >Relativ (100 %)</button>
+
+         <span class="muted">
+           Unter ${MIN_CHART_COUNT} → Sonstige
+         </span>
        ` : ''}
-     `;
+     </div>
+
+     ${state.charts ? `
+       <div class="charts">
+         ${ORGS.map(o =>
+                    chart(o, state.tab)
+                   ).join('')}
+       </div>
+     ` : ''}
+   `;
+    }
+
+    function bindCharts() {
+        for (
+            const node of root.querySelectorAll(
+                '[data-chart]'
+            )
+        ) {
+            const rows = chartData(
+                node.dataset.chart,
+                state.tab
+            );
+
+            const total = rows.reduce(
+                (s, r) => s + r.n,
+                0
+            );
+
+            const focus = i => {
+                node.querySelectorAll('[data-slice]')
+                    .forEach(el => {
+                    el.classList.toggle(
+                        'active',
+                        +el.dataset.slice === i
+                    );
+                });
+
+                const x = rows[i];
+
+                node.querySelector('.pie-center')
+                    .textContent = x
+                    ? x.name.slice(0, 18)
+                : `${fmt(total)} gesamt`;
+
+                node.querySelector('.pie-value')
+                    .textContent = x
+                    ? `${fmt(x.n)} · ${
+               (100 * x.n / total).toLocaleString(
+                    'de-DE',
+                    { maximumFractionDigits: 2 }
+                )
+            } %`
+           : '';
+
+                node.querySelector('.chart-focus')
+                    .textContent = x
+                    ? `${x.name}: ${fmt(x.n)} (${
+               (100 * x.n / total).toLocaleString(
+                    'de-DE',
+                    { maximumFractionDigits: 2 }
+                )
+            } %)${
+               x.small
+                    ? ` · davon ${fmt(x.small)} Kleinwachen`
+                 : ''
+            }`
+           : 'Über ein Segment oder die Legende fahren.';
+            };
+
+            node.querySelectorAll('[data-slice]')
+                .forEach(el => {
+                el.onmouseenter = () =>
+                focus(+el.dataset.slice);
+
+                el.onmouseleave = () =>
+                focus(-1);
+
+                el.onfocus = () =>
+                focus(+el.dataset.slice);
+
+                el.onblur = () =>
+                focus(-1);
+            });
+        }
     }
 
     // ==========================================
-    // FAHRZEUGTYPEN
+    // LEITSTELLENFILTER
     // ==========================================
 
-    function vehicleRows() {
-        return [
-            ...state.data.vehicleByType.entries()
-        ].map(([id, vs]) => ({
-            id,
-            name: vs[0].type,
-            count: vs.length
-        })).sort(
+    function centerSelect() {
+        return `
+     <div
+       class="toolbar"
+       style="margin:10px 0"
+     >
+       <label for="lssstat-center">
+         Leitstellenbereich:
+       </label>
+
+       <select id="lssstat-center">
+         <option value="all">
+           Alle Leitstellenbereiche
+         </option>
+
+         ${state.data.centers
+            .slice()
+            .sort((a, b) =>
+                  a.name.localeCompare(b.name, 'de')
+                 )
+            .map(c => `
+             <option
+               value="${esc(c.id)}"
+               ${c.id === state.center
+                 ? 'selected' : ''}
+             >${esc(c.name)}</option>
+           `).join('')}
+       </select>
+
+       <span class="muted">
+         Aktiviert / Gekauft
+         (im Bau zählt als gekauft)
+       </span>
+     </div>
+   `;
+    }
+
+    function selectedExtensions() {
+        return state.data.extensions
+            .map(ex => {
+            const sites = state.center === 'all'
+            ? ex.sites
+            : ex.sites.filter(
+                s => s.center === state.center
+            );
+
+            return {
+                ...ex,
+                sites,
+                bought: sites.length,
+                active: sites.filter(
+                    s => s.available && s.enabled
+                ).length
+            };
+        })
+            .filter(x => x.bought);
+    }
+
+    function extGroups() {
+        const map = new Map();
+
+        for (const ex of selectedExtensions()) {
+            const key =
+                  ex.org + '::' + ex.familyKey;
+
+            if (!map.has(key)) {
+                map.set(key, {
+                    key,
+                    org: ex.org,
+                    name: ex.familyName,
+                    items: []
+                });
+            }
+
+            map.get(key).items.push(ex);
+        }
+
+        return [...map.values()].sort(
             (a, b) =>
-            b.count - a.count ||
+            a.org.localeCompare(b.org, 'de') ||
             a.name.localeCompare(b.name, 'de')
         );
     }
 
-    function renderVehicleDetail() {
+    // ==========================================
+    // ERWEITERUNGSÜBERSICHT
+    // ==========================================
+
+    function extOverview() {
+        const groups = extGroups();
+        const q = low(state.search.trim());
+        const orgs = new Map();
+
+        for (const g of groups) {
+            const items = g.items.filter(x =>
+                                         !q ||
+                                         [
+                x.caption,
+                x.org,
+                x.familyName
+            ].some(t => low(t).includes(q))
+                                        );
+
+            if (!items.length) continue;
+
+            if (!orgs.has(g.org)) {
+                orgs.set(g.org, []);
+            }
+
+            orgs.get(g.org).push({
+                ...g,
+                items
+            });
+        }
+
+        let body = '';
+
+        for (const [org, gs] of orgs) {
+            const all = gs.flatMap(g => g.items);
+
+            const active = all.reduce(
+                (s, x) => s + x.active,
+                0
+            );
+
+            const bought = all.reduce(
+                (s, x) => s + x.bought,
+                0
+            );
+
+            const opened =
+                  state.openE.has('org:' + org);
+
+            body += `
+       <tr>
+         <td>
+           <button
+             class="linkbtn"
+             data-expand="org:${esc(org)}"
+           >
+             ${opened ? '▾' : '▸'} ${esc(org)}
+           </button>
+         </td>
+
+         <td class="num">
+           <b>${fmt(active)} / ${fmt(bought)}</b>
+         </td>
+         <td></td>
+       </tr>
+     `;
+
+            if (!opened) continue;
+
+            for (const g of gs) {
+                const a = g.items.reduce(
+                    (s, x) => s + x.active,
+                    0
+                );
+
+                const b = g.items.reduce(
+                    (s, x) => s + x.bought,
+                    0
+                );
+
+                const key = 'family:' + g.key;
+                const open = state.openE.has(key);
+
+                body += `
+         <tr class="subrow">
+           <td class="indent">
+             <button
+               class="linkbtn"
+               data-expand="${esc(key)}"
+             >
+               ${open ? '▾' : '▸'}
+               ${esc(g.name)}
+             </button>
+           </td>
+
+           <td class="num">
+             ${fmt(a)} / ${fmt(b)}
+           </td>
+           <td></td>
+         </tr>
+       `;
+
+
+                if (open) {
+                    for (const x of g.items.sort(
+                        (a, b) => b.bought - a.bought
+                    )) {
+                        const canActivate = x.sites.filter(
+                            s =>
+                            s.available &&
+                            !s.enabled &&
+                            Number.isInteger(s.metaIndex)
+                        ).length;
+
+                        const canDeactivate = x.sites.filter(
+                            s =>
+                            s.available &&
+                            s.enabled &&
+                            Number.isInteger(s.metaIndex)
+                        ).length;
+
+                        const locked =
+                              state.writing ||
+                              state.writeNeedsRefresh ||
+                              state.pending !== null;
+
+                        body += `
+            <tr>
+                <td style="padding-left:45px!important">
+                    <button
+                        class="linkbtn"
+                        data-extension="${esc(x.key)}"
+                    >
+                        ↳ ${esc(x.caption)}
+                    </button>
+                </td>
+
+                <td class="num">
+                    ${fmt(x.active)} / ${fmt(x.bought)}
+                </td>
+
+                <td>
+                    <div class="actions">
+                        <button
+                            data-row-bulk="activate"
+                            data-row-extension="${esc(x.key)}"
+                            ${locked || !canActivate
+                            ? 'disabled' : ''}
+                        >
+                            Alle aktivieren
+                            (${fmt(canActivate)})
+                        </button>
+
+                        <button
+                            data-row-bulk="deactivate"
+                            data-row-extension="${esc(x.key)}"
+                            class="danger"
+                            ${locked || !canDeactivate
+                            ? 'disabled' : ''}
+                        >
+                            Alle deaktivieren
+                            (${fmt(canDeactivate)})
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+                    }
+                }
+
+            }
+        }
+
+
+        return centerSelect() + `
+    <div class="notice">
+        Gezählt werden gekaufte Erweiterungen.
+        Nur verfügbare und eingeschaltete Erweiterungen
+        gelten als aktiviert. Änderungen erfolgen
+        ausschließlich nach Bestätigung.
+    </div>
+` + table(
+            [
+                ['Organisation / Gebäudetyp / Erweiterung'],
+                ['Aktiviert / Gekauft', true],
+                ['Aktionen']
+            ],
+            body,
+            ['42%', '17%', '41%']
+        );
+
+    }
+
+    // ==========================================
+    // ERWEITERUNGSDETAILS
+    // ==========================================
+
+    function extDetail() {
+        const ex = selectedExtensions().find(
+            x => x.key === state.detail.id
+        );
+
+        if (!ex) {
+            return centerSelect() + `
+       <button id="lssstat-back">
+         ← Zurück
+       </button>
+
+       <div class="notice">
+         Keine Einträge im gewählten Leitstellenbereich.
+       </div>
+     `;
+        }
+
+        const q = low(state.search.trim());
+
+        const rows = ex.sites
+        .map(s => ({
+            ...s,
+            st: state.data.byBuilding.get(s.buildingId)
+        }))
+        .filter(x =>
+                !q ||
+                [
+            x.st?.name,
+            x.st?.type,
+            extStatus(x),
+            x.buildingId
+        ].some(y => low(y).includes(q))
+               )
+        .sort((a, b) =>
+              (a.st?.name || '').localeCompare(
+            b.st?.name || '',
+            'de'
+        )
+             );
+
+        const { items, pageCtl } = pageRows(rows);
+
+        const inactive = ex.sites.filter(
+            s => s.available && !s.enabled
+        ).length;
+
+        const active = ex.sites.filter(
+            s => s.available && s.enabled
+        ).length;
+
+        const buttons = `
+     <div
+       class="toolbar"
+       style="margin:10px 0"
+     >
+       ${state.writeNeedsRefresh
+        ? `
+           <span class="notice">
+             Nach Änderungen zuerst Daten neu laden.
+           </span>
+         `
+         : ''}
+
+       <button
+         data-bulk="activate"
+         ${inactive &&
+              !state.writing &&
+              !state.writeNeedsRefresh
+        ? '' : 'disabled'}
+       >
+         Alle deaktivierten aktivieren
+         (${fmt(inactive)})
+       </button>
+
+       <button
+         data-bulk="deactivate"
+         class="danger"
+         ${active &&
+              !state.writing &&
+              !state.writeNeedsRefresh
+        ? '' : 'disabled'}
+       >
+         Alle aktiven deaktivieren
+         (${fmt(active)})
+       </button>
+     </div>
+   `;
+
+        const body = items.map(x => `
+     <tr>
+       <td>
+         ${x.st
+                               ? hrefB(x.st)
+                               : esc(x.buildingId)}
+       </td>
+
+       <td>
+         ${esc(x.st?.type || 'Unbekannt')}
+       </td>
+
+       <td>
+         <span class="stat">
+           ${extStatus(x)}
+         </span>
+       </td>
+
+       <td>
+         <div class="actions">
+           ${x.available ? `
+             <button
+               data-single="${esc(x.buildingId)}"
+               data-target="${x.enabled ? 'off' : 'on'}"
+               ${x.metaIndex === null ||
+                               state.writing ||
+                               state.writeNeedsRefresh
+                               ? 'disabled'
+                               : ''}
+             >
+               ${x.enabled
+                               ? 'Deaktivieren'
+                               : 'Aktivieren'}
+             </button>
+           ` : 'Im Bau'}
+         </div>
+       </td>
+     </tr>
+   `).join('');
+
+        return centerSelect() + `
+     <button id="lssstat-back">
+       ← Zurück zu Erweiterungen
+     </button>
+
+     <h3>
+       ${esc(ex.caption)} –
+       ${fmt(ex.active)} aktiviert /
+       ${fmt(ex.bought)} gekauft
+     </h3>
+
+     ${buttons}
+
+     ${table(
+            [
+                ['Wache'],
+                ['Gebäudetyp'],
+                ['Status'],
+                ['Aktion']
+            ],
+            body,
+            ['35%', '25%', '18%', '22%']
+        )}
+
+     ${pageCtl}
+   `;
+    }
+
+    // ==========================================
+    // FAHRZEUGDETAILS
+    // ==========================================
+
+    function vehicleDetail() {
         const all =
               state.data.vehicleByType.get(
                   state.detail.id
@@ -1707,514 +2264,656 @@
                     )
         : all;
 
-        const { controls, page } = paged(rows);
+        const { items, pageCtl } = pageRows(rows);
 
-        const body = page.map(v => {
-            const st = state.data.byBuilding.get(
-                v.buildingId
-            );
+        const body = items.map(v => `
+     <tr>
+       <td>
+         <a
+           target="_blank"
+           rel="noopener"
+           href="/vehicles/${encodeURIComponent(v.id)}"
+         >${esc(v.name)}</a>
+       </td>
 
-            return `
-         <tr>
-           <td>
-             <a
-               href="/vehicles/${encodeURIComponent(v.id)}"
-               target="_blank"
-               rel="noopener"
-             >${esc(v.name)}</a>
-           </td>
+       <td>
+         ${v.status == null
+                               ? 'Unbekannt'
+                               : 'Status ' + esc(v.status)}
+       </td>
 
-           <td>
-             <span class="stat">
-               ${v.status == null
-                ? 'Unbekannt'
-            : 'Status ' + esc(v.status)}
-             </span>
-           </td>
+       <td>
+         ${state.data.byBuilding.has(v.buildingId)
+                               ? hrefB(
+            state.data.byBuilding.get(v.buildingId)
+        )
+                               : 'Nicht zugeordnet'}
+       </td>
 
-           <td>
-             ${st
-                ? buildingLink(st)
-            : 'Nicht zugeordnet'}
-           </td>
-
-           <td class="num">${esc(v.id)}</td>
-         </tr>
-       `;
-        }).join('');
+       <td class="num">
+         ${esc(v.id)}
+       </td>
+     </tr>
+   `).join('');
 
         return `
-       <button id="lssstat-back">
-         ← Zurück zu Fahrzeugtypen
-       </button>
+     <button id="lssstat-back">
+       ← Zurück zu Fahrzeugtypen
+     </button>
 
-       <h3>
-         ${esc(state.detail.name)}
-         – ${fmt(rows.length)} Fahrzeuge
-       </h3>
+     <h3>
+       ${esc(state.detail.name)} –
+       ${fmt(rows.length)} Fahrzeuge
+     </h3>
 
-       <div class="notice">
-         FMS-Status zum Zeitpunkt des letzten Ladens,
-         keine Live-Aktualisierung.
-       </div>
+     <div class="notice">
+       FMS-Status zum Zeitpunkt des letzten Ladens.
+     </div>
 
-       ${table([
-            ['Fahrzeugname'],
-            ['Status'],
-            ['Wache'],
-            ['Fahrzeug-ID', true]
-        ], body)}
+     ${table(
+            [
+                ['Fahrzeug'],
+                ['Status'],
+                ['Wache'],
+                ['ID', true]
+            ],
+            body,
+            ['32%', '14%', '42%', '12%']
+        )}
 
-       ${controls}
-     `;
+     ${pageCtl}
+   `;
     }
 
     // ==========================================
-    // ERWEITERUNGEN – LEITSTELLENFILTER
+    // SCHREIBAKTIONEN – SICHERHEIT
     // ==========================================
 
-    function selectedExtensions() {
-        const id = state.centerFilter;
-
-        return state.data.extensions.map(ex => {
-            const sites = id === 'all'
-            ? ex.sites
-            : ex.sites.filter(s => s.center === id);
-
-            return {
-                ...ex,
-                sites,
-                bought: sites.length,
-                active: sites.filter(s => s.active).length
-            };
-        }).filter(ex => ex.bought > 0);
+    function actionPlan(sites, target) {
+        return sites
+            .filter(s =>
+                    s.available && s.enabled !== target
+                   )
+            .map(s => ({
+            ...s,
+            st: state.data.byBuilding.get(s.buildingId)
+        }));
     }
 
-    function extensionsGrouped() {
-        const map = new Map();
 
-        for (const ex of selectedExtensions()) {
-            const key =
-                  ex.org + '::' + ex.familyKey;
-
-            if (!map.has(key)) {
-                map.set(key, {
-                    key,
-                    org: ex.org,
-                    name: ex.familyName,
-                    items: [],
-                    bought: 0,
-                    active: 0
-                });
-            }
-
-            const g = map.get(key);
-
-            g.items.push(ex);
-            g.bought += ex.bought;
-            g.active += ex.active;
+    function beginWrite(sites, target, description) {
+        if (
+            state.loading ||
+            state.writing ||
+            state.writeNeedsRefresh ||
+            state.pending
+        ) {
+            return;
         }
 
-        return [...map.values()].sort(
-            (a, b) =>
-            a.org.localeCompare(b.org, 'de') ||
-            b.bought - a.bought
+        // Erweiterungen ermitteln, deren Status
+        // tatsächlich geändert werden muss.
+        const candidates = actionPlan(sites, target);
+
+        // Nur Erweiterungen mit eindeutigem Index
+        // für die Schreibaktion freigeben.
+        const ready = candidates.filter(
+            s => Number.isInteger(s.metaIndex)
         );
+
+        // Erweiterungen ohne eindeutige Zuordnung
+        // von der Aktion ausschließen.
+        const blocked = candidates.length - ready.length;
+
+        state.pending = {
+            ready,
+            blocked,
+            target,
+            description
+        };
+
+        // Bestätigungsdialog anzeigen.
+        render();
     }
 
-    function centerSelect() {
+
+    function writeDialog() {
+        const p = state.pending;
+
+        if (!p) return '';
+
         return `
-       <div
-         class="toolbar"
-         style="margin:10px 0"
-       >
-         <label
-           for="lssstat-center"
-           class="filterlabel"
-         >Leitstellenbereich:</label>
+     <div class="confirmbox">
+       <h3>${esc(p.description)}</h3>
 
-         <select id="lssstat-center">
-           <option value="all">
-             Alle Leitstellenbereiche
-           </option>
+       <p>
+         ${fmt(p.ready.length)}
+         Erweiterungen werden
+         ${p.target ? 'aktiviert' : 'deaktiviert'}.
+       </p>
 
-           ${state.data.centers.slice()
-            .sort((a, b) =>
-                  a.name.localeCompare(b.name, 'de')
-                 )
-            .map(c => `
-               <option
-                 value="${esc(c.id)}"
-                 ${c.id === state.centerFilter
-                 ? 'selected'
-                 : ''}
-               >${esc(c.name)}</option>
-             `).join('')}
-         </select>
+       ${p.blocked ? `
+         <p class="notice">
+           ${fmt(p.blocked)} Einträge können wegen
+           fehlender eindeutiger Zuordnung nicht
+           geändert werden.
+         </p>
+       ` : ''}
 
-         <span class="muted">
-           Aktiviert / Gekauft
-           (Im Bau zählt als gekauft)
-         </span>
-       </div>
-     `;
-    }
+       <p class="muted">
+         Der Schreib-Endpunkt schaltet den Zustand um.
+         Nur fertiggestellte Erweiterungen mit
+         abweichendem Status werden ausgewählt.
+         Nach der Änderung müssen die Daten
+         aktualisiert und kontrolliert werden.
+       </p>
 
-    // ==========================================
-    // ERWEITERUNGEN – ÜBERSICHT
-    // ==========================================
-
-    function renderExtensions() {
-        const groups = extensionsGrouped();
-
-        const q = low(state.search.trim());
-
-        const visible = groups.map(g => ({
-            ...g,
-
-            items: g.items.filter(x =>
-                                  !q ||
-                                  [
-                x.caption,
-                x.familyName,
-                x.org
-            ].some(y => low(y).includes(q))
-                                 )
-        })).filter(g => g.items.length);
-
-        const orgs = new Map();
-
-        for (const g of visible) {
-            if (!orgs.has(g.org)) {
-                orgs.set(g.org, []);
-            }
-
-            orgs.get(g.org).push(g);
-        }
-
-        let html = centerSelect();
-
-        html += `
-       <div class="notice">
-         Gezählt werden nur gekaufte Erweiterungen
-         (Einträge in der Gebäude-API).
-         Aktiviert = verfügbar und eingeschaltet.
-       </div>
-     `;
-
-        const body = [];
-
-        for (const [org, gs] of orgs) {
-            const active = gs.reduce(
-                (n, g) =>
-                n + g.items.reduce(
-                    (t, x) => t + x.active,
-                    0
-                ),
-                0
-            );
-
-            const bought = gs.reduce(
-                (n, g) =>
-                n + g.items.reduce(
-                    (t, x) => t + x.bought,
-                    0
-                ),
-                0
-            );
-
-            const ok = state.openExtensions.has(
-                'org:' + org
-            );
-
-            body.push(`
-         <tr>
-           <td>
-             <button
-               class="linkbtn"
-               data-expand="${esc('org:' + org)}"
-             >
-               ${ok ? '▾' : '▸'} ${esc(org)}
-             </button>
-           </td>
-
-           <td class="num">
-             <b>${fmt(active)} / ${fmt(bought)}</b>
-           </td>
-         </tr>
-       `);
-
-            if (!ok) continue;
-
-            for (const g of gs) {
-                const opened = state.openExtensions.has(
-                    'family:' + g.key
-                );
-
-                const ga = g.items.reduce(
-                    (n, x) => n + x.active,
-                    0
-                );
-
-                const gb = g.items.reduce(
-                    (n, x) => n + x.bought,
-                    0
-                );
-
-                body.push(`
-           <tr class="subrow">
-             <td class="indent">
-               <button
-                 class="linkbtn"
-                 data-expand="${esc('family:' + g.key)}"
-               >
-                 ${opened ? '▾' : '▸'}
-                 ${esc(g.name)}
-               </button>
-             </td>
-
-             <td class="num">
-               ${fmt(ga)} / ${fmt(gb)}
-             </td>
-           </tr>
-         `);
-
-                if (!opened) continue;
-
-                for (const x of g.items.sort(
-                    (a, b) => b.bought - a.bought
-                )) {
-                    body.push(`
-             <tr>
-               <td style="padding-left:45px!important">
-                 <button
-                   class="linkbtn"
-                   data-extension="${esc(x.key)}"
-                 >
-                   ↳ ${esc(x.caption)}
-                 </button>
-               </td>
-
-               <td class="num">
-                 ${fmt(x.active)} / ${fmt(x.bought)}
-               </td>
-             </tr>
-           `);
-                }
-            }
-        }
-
-        html += table([
-            ['Organisation / Gebäudetyp / Erweiterung'],
-            ['Aktiviert / Gekauft', true]
-        ], body.join(''));
-
-        return html;
-    }
-
-    // ==========================================
-    // ERWEITERUNGEN – DETAILANSICHT
-    // ==========================================
-
-    function renderExtensionDetail() {
-        const ex = selectedExtensions().find(
-            x => x.key === state.detail.id
-        );
-
-        if (!ex) {
-            return `
-         <button id="lssstat-back">
-           ← Zurück zu Erweiterungen
+       <div class="actions">
+         <button id="lssstat-write-cancel">
+           Zurück
          </button>
 
-         <div class="notice">
-           Keine Erweiterungen für diesen Filter vorhanden.
-         </div>
-       `;
+         <button
+           id="lssstat-write-confirm"
+           class="primary"
+           ${p.ready.length ? '' : 'disabled'}
+         >
+           ${fmt(p.ready.length)}
+           Änderungen bestätigen
+         </button>
+       </div>
+     </div>
+   `;
+    }
+
+    // ==========================================
+    // EINZELNE ERWEITERUNG UMSCHALTEN
+    // ==========================================
+
+
+
+    async function readExtensionState(s) {
+        const id = Number(s.buildingId);
+
+        if (!Number.isSafeInteger(id) || id <= 0) {
+            throw new Error('Ungültige Gebäude-ID');
         }
 
-        const q = low(state.search.trim());
+        // Die V2-API liefert Gebäude nach ID sortiert.
+        // "after" gibt die untere ID-Grenze an.
+        const url =
+              `/api/v2/buildings?after=${id - 1}&limit=1`;
 
-        const rows = ex.sites.map(s => ({
-            ...s,
-            st: state.data.byBuilding.get(
-                s.buildingId
-            )
-        }))
-        .filter(x =>
-                !q ||
-                [
-            x.st?.name,
-            x.st?.type,
-            x.status,
-            x.buildingId
-        ].some(v => low(v).includes(q))
-               )
-        .sort((a, b) =>
-              (a.st?.name || '').localeCompare(
-            b.st?.name || '',
-            'de'
-        )
-             );
+        const response = await fetch(url, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: {
+                Accept: 'application/json'
+            }
+        });
 
-        const { controls, page } = paged(rows);
+        if (!response.ok) {
+            throw new Error(
+                `Gebäudeprüfung: HTTP ${response.status}`
+        );
+        }
 
-        const body = page.map(x => `
-       <tr>
-         <td>
-           ${x.st
-                              ? buildingLink(x.st)
-                              : esc(x.buildingId)}
-         </td>
+        const payload = await response.json();
 
-         <td>
-           ${esc(x.st?.type || 'Unbekannt')}
-         </td>
+        const buildings = Array.isArray(payload)
+        ? payload
+        : payload.result;
 
-         <td>
-           <span class="stat">
-             ${esc(x.status)}
-           </span>
-         </td>
-       </tr>
-     `).join('');
+        if (!Array.isArray(buildings)) {
+            throw new Error(
+                'Unerwartetes Format der Gebäude-API'
+            );
+        }
 
-        return `
-       ${centerSelect()}
+        const building = buildings.find(
+            b => String(b.id) === String(s.buildingId)
+        );
 
-       <button id="lssstat-back">
-         ← Zurück zu Erweiterungen
-       </button>
+        // Niemals den Zustand einer anderen Wache
+        // als Bestätigung akzeptieren.
+        if (!building) {
+            throw new Error(
+                'Gebäude wurde in der V2-Antwort ' +
+                'nicht gefunden. Aktion abgebrochen.'
+            );
+        }
 
-       <h3>
-         ${esc(ex.caption)}
-         – ${fmt(ex.active)} aktiviert /
-         ${fmt(ex.bought)} gekauft
-       </h3>
+        if (!Array.isArray(building.extensions)) {
+            throw new Error(
+                'Erweiterungsdaten fehlen in der API'
+            );
+        }
 
-       ${table([
-            ['Wache'],
-            ['Gebäudetyp'],
-            ['Status']
-        ], body)}
+        const matches = building.extensions.filter(x =>
+                                                   String(x.type_id) === String(s.typeKey) &&
+                                                   String(x.caption) === String(s.caption)
+                                                  );
 
-       ${controls}
-     `;
+        if (matches.length !== 1) {
+            throw new Error(
+                'Erweiterung nicht eindeutig zuordenbar'
+            );
+        }
+
+        return matches[0];
     }
+
+
+
+    function updateLocalExtension(s, current) {
+        const newAvailable = current.available === true;
+        const newEnabled = current.enabled === true;
+
+        // Originaldatensatz im Statistikmodell suchen.
+        // Nicht nur die Kopie aus actionPlan() ändern!
+        const matches = state.data.extensions.flatMap(ex =>
+                                                      ex.sites.filter(site =>
+                                                                      String(site.buildingId) === String(s.buildingId) &&
+                                                                      String(site.typeKey) === String(s.typeKey) &&
+                                                                      String(site.caption) === String(s.caption)
+                                                                     )
+                                                     );
+
+        if (matches.length !== 1) {
+            throw new Error(
+                'Lokale Erweiterung nicht eindeutig gefunden. ' +
+                'Bitte Daten neu laden.'
+            );
+        }
+
+        const original = matches[0];
+
+        const oldActive =
+              original.available === true &&
+              original.enabled === true;
+
+        const newActive = newAvailable && newEnabled;
+
+        const difference =
+              Number(newActive) - Number(oldActive);
+
+        // Tatsächlich gespeicherte Erweiterung aktualisieren
+        original.available = newAvailable;
+        original.enabled = newEnabled;
+
+        // Gebäude-Statistik aktualisieren
+        const station = state.data.byBuilding.get(
+            String(s.buildingId)
+        );
+
+        if (station && difference !== 0) {
+            station.extActive += difference;
+
+            // Statistik der Gebäudefamilie aktualisieren
+            const family = state.data.families.find(
+                f => f.key === station.familyKey
+            );
+
+            if (family) {
+                const section = family[
+                    station.small ? 'small' : 'normal'
+                ];
+
+                section.active += difference;
+            }
+        }
+
+        console.log(
+            '[LSS Statistik] Erweiterung aktualisiert:',
+            s.caption,
+            'Gebäude:',
+            s.buildingId,
+            'Aktiv:',
+            newActive
+        );
+    }
+
+
+    async function postToggle(s, target) {
+        const token = document.querySelector(
+            'meta[name="csrf-token"]'
+        )?.content;
+
+        if (!token) {
+            throw Error('CSRF-Token fehlt');
+        }
+
+        if (!Number.isInteger(s.metaIndex)) {
+            throw Error('Erweiterungsindex nicht eindeutig');
+        }
+
+        // Vor der Änderung den aktuellen Zustand prüfen.
+        const before = await readExtensionState(s);
+
+        if (before.available !== true) {
+            throw Error('Erweiterung ist noch im Bau');
+        }
+
+        if (before.enabled !== s.enabled) {
+            throw Error(
+                'Der gespeicherte Zustand ist veraltet. ' +
+                'Bitte Daten aktualisieren.'
+            );
+        }
+
+        if (before.enabled === target) {
+            // Bereits im gewünschten Zustand:
+            // Kein Umschalt-Aufruf erforderlich.
+            updateLocalExtension(s, before);
+            return false;
+        }
+
+        const url =
+              `/buildings/${encodeURIComponent(s.buildingId)}` +
+              `/extension_ready/${s.metaIndex}/` +
+              encodeURIComponent(s.buildingId);
+
+        const body = new URLSearchParams({
+            authenticity_token: token,
+            _method: 'post'
+        });
+
+        const response = await fetch(url, {
+            method: 'POST',
+            credentials: 'same-origin',
+            redirect: 'follow',
+            headers: {
+                'Content-Type':
+                'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-CSRF-Token': token,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body
+        });
+
+        if (
+            !response.ok ||
+            new URL(
+                response.url,
+                location.origin
+            ).pathname.includes('sign_in')
+        ) {
+            throw Error(
+                `Änderung fehlgeschlagen: HTTP ${response.status}`
+        );
+        }
+
+        // Nach der Änderung den tatsächlichen Status
+        // aus der Einzelgebäude-API kontrollieren.
+        let verified = false;
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+            await sleep(500);
+
+            const current = await readExtensionState(s);
+
+            if (
+                current.available === true &&
+                current.enabled === target
+            ) {
+                updateLocalExtension(s, current);
+                verified = true;
+                break;
+            }
+        }
+
+        if (!verified) {
+            throw Error(
+                'Serverzustand konnte nicht bestätigt werden. ' +
+                'Keine weiteren Änderungen durchführen.'
+            );
+        }
+
+        return true;
+    }
+
+
+
+    // ==========================================
+    // MASSENAKTIONEN
+    // ==========================================
+
+
+    async function executeWrites() {
+        const p = state.pending;
+
+        if (!p || !p.ready.length || state.writing) {
+            return;
+        }
+
+        state.pending = null;
+        state.writing = true;
+        state.stopWrite = false;
+        state.writeLog = [];
+
+        let done = 0;
+        let skipped = 0;
+        let failed = false;
+
+        render();
+
+        for (const s of p.ready) {
+            if (state.stopWrite) break;
+
+            try {
+                const changed = await postToggle(
+                    s,
+                    p.target
+                );
+
+                if (changed) {
+                    done++;
+                } else {
+                    skipped++;
+                }
+
+                state.writeLog.push(
+                    `${changed ? 'OK' : 'ÜBERSPRUNGEN'}: ` +
+                    `${s.st?.name || s.buildingId}`
+            );
+
+            } catch (error) {
+                failed = true;
+                state.stopWrite = true;
+
+                // Nach unklaren Fehlern können lokale und
+                // serverseitige Daten auseinanderliegen.
+                state.writeNeedsRefresh = true;
+
+                state.writeLog.push(
+                    `FEHLER ${s.buildingId}: ${error.message}`
+            );
+
+                break;
+            }
+
+            progress(
+                `Erweiterungen: ${fmt(done)} geändert, ` +
+                `${fmt(skipped)} übersprungen`
+        );
+
+            render();
+
+            if (!state.stopWrite) {
+                await sleep(ACTION_DELAY_MS);
+            }
+        }
+
+        state.writing = false;
+        state.pending = null;
+
+        state.writeLog.push(
+            `Beendet: ${fmt(done)} geändert, ` +
+            `${fmt(skipped)} übersprungen.`
+    );
+
+        progress(
+            failed
+            ? 'Fehler: Daten bitte vollständig aktualisieren'
+            : `Fertig: ${fmt(done)} Erweiterungen geändert`
+    );
+
+        render();
+    }
+
 
     // ==========================================
     // HAUPTANSICHT
     // ==========================================
 
     function render() {
+        const content = $('#lssstat-content');
+
         $('.tabs').innerHTML = tabs.map(
-            ([id, title]) => `
-         <button
-           data-tab="${id}"
-           class="${state.tab === id ? 'active' : ''}"
-         >${esc(title)}</button>
-       `
-     ).join('');
-
-        $('.tabs')
-            .querySelectorAll('[data-tab]')
-            .forEach(el => {
-            el.onclick = () => {
-                state.tab = el.dataset.tab;
-                state.detail = null;
-                state.page = 0;
-
-                clearSearch();
-                render();
-            };
-        });
+            ([id, n]) => `
+       <button
+         data-tab="${id}"
+         class="${state.tab === id ? 'active' : ''}"
+         ${state.writing ? 'disabled' : ''}
+       >${n}</button>
+     `
+   ).join('');
 
         $('#lssstat-export').disabled =
-            !state.data || state.tab === 'overview';
+            !state.data ||
+            state.tab === 'overview' ||
+            state.writing;
 
-        const content = $('#lssstat-content');
+        $('#lssstat-load').disabled =
+            state.loading ||
+            state.writing;
 
         if (!state.data) {
             content.innerHTML = `
-         <div class="notice">
-           Klicke auf „Daten laden / aktualisieren“.
-         </div>
-       `;
+       <div class="notice">
+         Klicke auf „Daten laden / aktualisieren“.
+       </div>
+     `;
 
+            bind();
             return;
         }
 
         const d = state.data;
 
         let html = d.warnings.map(w => `
-       <div class="notice">${esc(w)}</div>
-     `).join('');
+     <div class="notice">
+       ${esc(w)}
+     </div>
+   `).join('');
 
+        if (state.writing) {
+            html += `
+       <div class="notice">
+         Änderungen laufen …
+         <button id="lssstat-stop">
+           Nach aktueller Anfrage stoppen
+         </button>
+       </div>
+     `;
+        }
+
+        if (state.writeLog.length) {
+            html += `
+       <details>
+         <summary>
+           Änderungsprotokoll
+           (${state.writeLog.length})
+         </summary>
+         <pre>${esc(
+                state.writeLog.slice(-100).join('\n')
+            )}</pre>
+       </details>
+     `;
+        }
+
+        if (state.pending) {
+            html += writeDialog();
+        }
+
+        // Fahrzeugdetailansicht
         if (
             state.tab === 'vehicletypes' &&
             state.detail?.kind === 'vehicle'
         ) {
-            html += renderVehicleDetail();
+            html += vehicleDetail();
 
+            // Erweiterungsdetailansicht
         } else if (
             state.tab === 'extensions' &&
             state.detail?.kind === 'extension'
         ) {
-            html += renderExtensionDetail();
+            html += extDetail();
 
+            // Hauptübersicht
         } else if (state.tab === 'overview') {
             html += `
-         <div class="notice">
-           Stand:
-           ${esc(d.loadedAt.toLocaleString('de-DE'))}.
-           Alle Werte sind eine Momentaufnahme.
-         </div>
+       <div class="notice">
+         Stand:
+         ${esc(d.loadedAt.toLocaleString('de-DE'))}.
+         Alle Werte sind eine Momentaufnahme.
+       </div>
 
-         <div class="metrics">
+       <div class="metrics">
+         ${[
+                ['Gebäude', d.buildings],
+                ['Fahrzeuge', d.vehicles],
+                ['Fahrzeugtypen', d.vehicleByType.size],
+                ['Leitstellenbereiche', d.centers.length]
+            ].map(([name, n]) => `
            <div class="metric">
-             Gebäude
-             <strong>${fmt(d.buildings)}</strong>
+             ${name}
+             <strong>${fmt(n)}</strong>
            </div>
+         `).join('')}
+       </div>
+     `;
 
-           <div class="metric">
-             Fahrzeuge
-             <strong>${fmt(d.vehicles)}</strong>
-           </div>
-
-           <div class="metric">
-             Fahrzeugtypen
-             <strong>${fmt(d.vehicleByType.size)}</strong>
-           </div>
-
-           <div class="metric">
-             Leitstellenbereiche
-             <strong>${fmt(d.centers.length)}</strong>
-           </div>
-         </div>
-
-         <h3>Gebäude nach Organisation</h3>
-         ${simpleTable(d.groups.building)}
-
-         <h3>Fahrzeuge nach Organisation ihrer Wache</h3>
-         ${simpleTable(d.groups.vehicle)}
-
-         <p class="muted">
-           Organisationen werden nach Gebäudetyp
-           eingeordnet; unbekannte Typen unter
-           „Weitere“.
-         </p>
-       `;
+            for (
+                const [title, group] of [
+                    [
+                        'Gebäude nach Organisation',
+                        d.groups.building
+                    ],
+                    [
+                        'Fahrzeuge nach Organisation ihrer Wache',
+                        d.groups.vehicle
+                    ]
+                ]
+            ) {
+                html += `
+         <h3>${title}</h3>
+       ` + table(
+                    [
+                        ['Organisation'],
+                        ['Anzahl', true]
+                    ],
+                    sorted(group).map(([name, n]) => `
+           <tr>
+             <td>${esc(name)}</td>
+             <td class="num">${fmt(n)}</td>
+           </tr>
+         `).join(''),
+                    ['75%', '25%']
+                );
+            }
 
         } else if (state.tab === 'extensions') {
-            html += renderExtensions();
+            html += extOverview();
 
         } else {
+            // Diagramme
             if (
                 ['buildingtypes', 'vehicletypes'].includes(
                     state.tab
                 )
             ) {
-                html += chartControls();
+                html += charts();
             }
 
             let rows = [];
@@ -2245,93 +2944,111 @@
                     .sort((a, b) => b.count - a.count);
             }
 
-            rows = filtered(rows);
+            rows = filter(rows);
 
-            const { controls, page } = paged(rows);
+            const { items, pageCtl } = pageRows(rows);
 
             html += `
-         <div class="notice">
-           ${fmt(rows.length)} Einträge ·
-           ${PAGE_ROWS} pro Seite ·
-           Stand:
-           ${esc(d.loadedAt.toLocaleString('de-DE'))}
-         </div>
-       `;
+       <div class="notice">
+         ${fmt(rows.length)} Einträge ·
+         ${PAGE_ROWS} pro Seite ·
+         Stand:
+         ${esc(d.loadedAt.toLocaleString('de-DE'))}
+       </div>
+     `;
 
-            // Gebäudetypen
+            // ======================================
+            // GEBÄUDETYPEN
+            // ======================================
+
             if (state.tab === 'buildingtypes') {
-                const body = [];
+                let body = '';
 
-                for (const r of page) {
-                    const toggle = [
+                for (const r of items) {
+                    const can = [
                         'fire',
                         'rescue',
                         'police'
                     ].includes(r.key);
 
-                    const open = state.openBuildings.has(
-                        r.key
-                    );
+                    const open =
+                          state.openB.has(r.key);
 
-                    body.push(`
-             <tr>
-               <td>
-                 ${toggle ? `
-                   <button
-                     class="linkbtn"
-                     data-building="${esc(r.key)}"
-                   >
-                     ${open ? '▾' : '▸'}
-                     ${esc(r.name)}
-                   </button>
-                 ` : esc(r.name)}
-               </td>
+                    const cells = p => `
+           <td class="num">${fmt(p.count)}</td>
+           <td class="num">${fmt(p.vehicles)}</td>
+           <td class="num">${fmt(p.personal)}</td>
+           <td class="num">
+             ${fmt(p.active)} / ${fmt(p.bought)}
+           </td>
+         `;
 
-               <td class="num">
-                 ${fmt(r.count)}
-               </td>
-             </tr>
-           `);
+                    body += `
+           <tr>
+             <td>
+               ${can ? `
+                 <button
+                   class="linkbtn"
+                   data-building="${esc(r.key)}"
+                 >
+                   ${open ? '▾' : '▸'}
+                   ${esc(r.name)}
+                 </button>
+               ` : esc(r.name)}
+             </td>
 
-                     if (toggle && open) {
-                         body.push(`
+             ${cells(r)}
+           </tr>
+         `;
+
+                    if (can && open) {
+                        for (
+                            const [key, label] of [
+                                ['normal', 'normal'],
+                                ['small', 'Kleinwache']
+                            ]
+                        ) {
+                            body += `
                <tr class="subrow">
                  <td class="indent">
-                   ↳ ${esc(r.name)} (normal)
+                   ↳ ${esc(label)}
                  </td>
 
-                 <td class="num">
-                   ${fmt(r.normal)}
-                 </td>
+                 ${cells(r[key])}
                </tr>
-             `);
+             `;
+                        }
+                    }
+                }
 
-                       body.push(`
-               <tr class="subrow">
-                 <td class="indent">
-                   ↳ ${esc(r.name)} (Kleinwache)
-                 </td>
+                html += table(
+                    [
+                        ['Gebäudetyp'],
+                        ['Gebäude', true],
+                        ['Fahrzeuge', true],
+                        ['Personal', true],
+                        ['Erweiterungen Aktiv / Gekauft', true]
+                    ],
+                    body,
+                    ['34%', '12%', '12%', '15%', '27%']
+                );
+            }
 
-                 <td class="num">
-                   ${fmt(r.small)}
-                 </td>
-               </tr>
-             `);
-                   }
-                 }
+            // ======================================
+            // FAHRZEUGTYPEN
+            // ======================================
 
-                 html += table([
-                     ['Gebäudetyp'],
-                     ['Anzahl', true]
-                 ], body.join(''));
-             }
-
-            // Fahrzeugtypen
             if (state.tab === 'vehicletypes') {
-                html += table([
-                    ['Fahrzeugtyp'],
-                    ['Anzahl', true]
-                ], page.map(r => `
+                html += table(
+                    [
+                        ['Fahrzeugtyp'],
+                        ['Gesamt', true],
+                        ['Status 2', true],
+                        ['Status 6', true],
+                        ['Ø je Wache', true]
+                    ],
+
+                    items.map(r => `
            <tr>
              <td>
                <button
@@ -2343,27 +3060,46 @@
              <td class="num">
                ${fmt(r.count)}
              </td>
-           </tr>
-         `).join(''));
-             }
 
-            // Einzelne Wachen
-            if (state.tab === 'stations') {
-                html += table([
-                    ['Wache'],
-                    ['Gebäudetyp'],
-                    ['Organisation'],
-                    ['Fahrzeuge', true],
-                    ['Zusammensetzung']
-                ], page.map(r => `
-           <tr>
-             <td>
-               ${buildingLink(r)}
-
-               <div class="muted">
-                 ID ${esc(r.id)}
-               </div>
+             <td class="num">
+               ${fmt(r.status2)}
              </td>
+
+             <td class="num">
+               ${fmt(r.status6)}
+             </td>
+
+             <td class="num">
+               ${r.avg === null
+                              ? '—'
+                              : r.avg.toLocaleString('de-DE', {
+                        maximumFractionDigits: 2
+                    })}
+             </td>
+           </tr>
+         `).join(''),
+
+                    ['39%', '14%', '14%', '14%', '19%']
+                );
+            }
+
+            // ======================================
+            // EINZELNE WACHEN
+            // ======================================
+
+            if (state.tab === 'stations') {
+                html += table(
+                    [
+                        ['Wache'],
+                        ['Gebäudetyp'],
+                        ['Organisation'],
+                        ['Fahrzeuge', true],
+                        ['Zusammensetzung']
+                    ],
+
+                    items.map(r => `
+           <tr>
+             <td>${hrefB(r)}</td>
 
              <td>
                ${esc(r.type)}
@@ -2377,25 +3113,37 @@
              </td>
 
              <td>
-               ${detailEntries(r.byType)}
+               ${detailEntries(
+                        r.byType,
+                        'Fahrzeuge'
+                    )}
              </td>
            </tr>
-         `).join(''));
-             }
+         `).join(''),
 
-            // Leitstellenbereiche
+                    ['28%', '22%', '16%', '12%', '22%']
+                );
+            }
+
+            // ======================================
+            // LEITSTELLENBEREICHE
+            // ======================================
+
             if (state.tab === 'centers') {
-                html += table([
-                    ['Leitstellenbereich'],
-                    ['Gebäude', true],
-                    ['Fahrzeuge', true],
-                    ['Zusammensetzung']
-                ], page.map(r => `
+                html += table(
+                    [
+                        ['Leitstellenbereich'],
+                        ['Gebäude', true],
+                        ['Fahrzeuge', true],
+                        ['Zusammensetzung']
+                    ],
+
+                    items.map(r => `
            <tr>
              <td>
                ${r.id === 'ohne'
-                             ? esc(r.name)
-                             : `
+                              ? esc(r.name)
+                              : `
                    <a
                      href="/buildings/${encodeURIComponent(r.id)}"
                      target="_blank"
@@ -2409,39 +3157,61 @@
              </td>
 
              <td class="num">
-               ${fmt(r.count)}
+               ${fmt(r.vehicles)}
              </td>
 
              <td>
-               ${detailEntries(r.byBuilding)}
-               ${detailEntries(r.byVehicle)}
+               ${detailEntries(
+                        r.byBuilding,
+                        'Gebäude'
+                    )}
+
+               ${detailEntries(
+                        r.byVehicle,
+                        'Fahrzeuge'
+                    )}
              </td>
            </tr>
-         `).join(''));
-             }
+         `).join(''),
 
-            html += controls;
+                    ['41%', '14%', '14%', '31%']
+                );
+            }
+
+            html += pageCtl;
         }
 
         content.innerHTML = html;
-
-        bindContent();
+        bind();
     }
 
     // ==========================================
-    // BEDIENELEMENTE
+    // BUTTONS UND INTERAKTIONEN
     // ==========================================
 
-    function bindContent() {
-        const content = $('#lssstat-content');
+    function bind() {
+        const c = $('#lssstat-content');
 
-        content.querySelector('#lssstat-charts')
+        $('.tabs')
+            .querySelectorAll('[data-tab]')
+            .forEach(b => {
+            b.onclick = () => {
+                state.tab = b.dataset.tab;
+                state.detail = null;
+                state.pending = null;
+                state.page = 0;
+                clearSearch();
+                render();
+            };
+        });
+
+        c.querySelector('#lssstat-charts')
             ?.addEventListener('click', () => {
             state.charts = !state.charts;
             render();
         });
 
-        content.querySelectorAll('[data-mode]')
+        c.querySelectorAll('[data-mode]')
             .forEach(b => {
             b.onclick = () => {
                 state.mode = b.dataset.mode;
@@ -2449,56 +3219,55 @@
             };
         });
 
-        content.querySelectorAll('[data-step]')
+        c.querySelectorAll('[data-step]')
             .forEach(b => {
             b.onclick = () => {
                 state.page += Number(b.dataset.step);
                 render();
-                content.scrollTop = 0;
+                c.scrollTop = 0;
             };
         });
 
         // Kleinwachen aufklappen
-        content.querySelectorAll('[data-building]')
+        c.querySelectorAll('[data-building]')
             .forEach(b => {
             b.onclick = () => {
-                const key = b.dataset.building;
+                const k = b.dataset.building;
 
-                if (state.openBuildings.has(key)) {
-                    state.openBuildings.delete(key);
+                if (state.openB.has(k)) {
+                    state.openB.delete(k);
                 } else {
-                    state.openBuildings.add(key);
+                    state.openB.add(k);
                 }
 
                 render();
             };
         });
 
-        // Organisationen und Gebäudetypen
-        // bei den Erweiterungen aufklappen
-        content.querySelectorAll('[data-expand]')
+        // Erweiterungen aufklappen
+        c.querySelectorAll('[data-expand]')
             .forEach(b => {
             b.onclick = () => {
-                const key = b.dataset.expand;
+                const k = b.dataset.expand;
 
-                if (state.openExtensions.has(key)) {
-                    state.openExtensions.delete(key);
+                if (state.openE.has(k)) {
+                    state.openE.delete(k);
                 } else {
-                    state.openExtensions.add(key);
+                    state.openE.add(k);
                 }
 
                 render();
             };
         });
 
-        // Fahrzeugdetail
-        content.querySelectorAll('[data-vehicle]')
+        // Fahrzeugtyp öffnen
+        c.querySelectorAll('[data-vehicle]')
             .forEach(b => {
             b.onclick = () => {
                 state.detail = {
                     kind: 'vehicle',
                     id: b.dataset.vehicle,
-                    name: b.textContent
+                    name: b.textContent.trim()
                 };
 
                 state.page = 0;
@@ -2507,8 +3276,8 @@
             };
         });
 
-        // Erweiterungsdetail
-        content.querySelectorAll('[data-extension]')
+        // Erweiterung öffnen
+        c.querySelectorAll('[data-extension]')
             .forEach(b => {
             b.onclick = () => {
                 state.detail = {
@@ -2522,21 +3291,125 @@
             };
         });
 
-        content.querySelector('#lssstat-back')
+        c.querySelector('#lssstat-back')
             ?.addEventListener('click', () => {
             state.detail = null;
+            state.pending = null;
             state.page = 0;
             clearSearch();
             render();
         });
 
         // Leitstellenfilter
-        content.querySelector('#lssstat-center')
+        c.querySelector('#lssstat-center')
             ?.addEventListener('change', e => {
-            state.centerFilter = e.target.value;
+            state.center = e.target.value;
             state.page = 0;
+            state.pending = null;
             render();
         });
+
+        const ex =
+              state.detail?.kind === 'extension'
+        ? selectedExtensions().find(
+            x => x.key === state.detail.id
+        )
+        : null;
+
+        // Sammelaktionen direkt in der Erweiterungsübersicht
+        c.querySelectorAll('[data-row-bulk]').forEach(button => {
+            button.onclick = () => {
+                if (
+                    state.writing ||
+                    state.writeNeedsRefresh ||
+                    state.pending
+                ) {
+                    return;
+                }
+
+                const extension = selectedExtensions().find(
+                    x => x.key === button.dataset.rowExtension
+                );
+
+                if (!extension) {
+                    console.warn(
+                        '[LSS Statistik] Erweiterung nicht gefunden'
+                    );
+                    return;
+                }
+
+                const activate =
+                      button.dataset.rowBulk === 'activate';
+
+                beginWrite(
+                    extension.sites,
+                    activate,
+                    `${extension.caption}: Alle ${
+                activate ? 'aktivieren' : 'deaktivieren'
+                    }`
+        );
+            };
+        });
+
+        // Sammelaktionen vorbereiten
+        c.querySelectorAll('[data-bulk]')
+            .forEach(b => {
+            b.onclick = () => {
+                if (!ex) return;
+
+                const activate =
+                      b.dataset.bulk === 'activate';
+
+                beginWrite(
+                    ex.sites,
+                    activate,
+                    `${ex.caption}: Alle ${
+             activate
+                ? 'aktivieren'
+                : 'deaktivieren'
+                }`
+         );
+        };
+    });
+
+        // Einzelaktionen vorbereiten
+        c.querySelectorAll('[data-single]')
+            .forEach(b => {
+            b.onclick = () => {
+                if (!ex) return;
+
+                beginWrite(
+                    ex.sites.filter(
+                        s =>
+                        s.buildingId === b.dataset.single
+                    ),
+                    b.dataset.target === 'on',
+                    `Einzeländerung: ${ex.caption}`
+         );
+        };
+    });
+
+        c.querySelector('#lssstat-write-confirm')
+            ?.addEventListener(
+            'click',
+            executeWrites
+        );
+
+        c.querySelector('#lssstat-write-cancel')
+            ?.addEventListener('click', () => {
+            state.pending = null;
+            render();
+        });
+
+        c.querySelector('#lssstat-stop')
+            ?.addEventListener('click', () => {
+            state.stopWrite = true;
+            progress(
+                'Wird nach aktueller Anfrage angehalten …'
+            );
+        });
+
+        bindCharts();
     }
 
     // ==========================================
@@ -2554,30 +3427,68 @@
         let heads = [];
         let rows = [];
 
-        // Fahrzeugdetails
-        if (
-            state.tab === 'vehicletypes' &&
-            state.detail?.kind === 'vehicle'
-        ) {
+        if (state.tab === 'buildingtypes') {
             heads = [
-                'ID',
-                'Fahrzeug',
-                'Typ',
-                'Status',
-                'Wache',
-                'Gebäude-ID'
+                'Gebäudetyp',
+                'Gebäude',
+                'Fahrzeuge',
+                'Personal',
+                'Aktiviert',
+                'Gekauft',
+                'Kleinwachen'
             ];
 
-            rows = (
-                d.vehicleByType.get(state.detail.id) || []
-            ).map(v => [
-                v.id,
-                v.name,
-                v.type,
-                v.status ?? '',
-                d.byBuilding.get(v.buildingId)?.name || '',
-                v.buildingId || ''
+            rows = filter(familyRows()).map(r => [
+                r.name,
+                r.count,
+                r.vehicles,
+                r.personal,
+                r.active,
+                r.bought,
+                r.small.count
             ]);
+
+        } else if (state.tab === 'vehicletypes') {
+            if (state.detail?.kind === 'vehicle') {
+                heads = [
+                    'ID',
+                    'Fahrzeug',
+                    'Typ',
+                    'Status',
+                    'Wache'
+                ];
+
+                rows = (
+                    d.vehicleByType.get(
+                        state.detail.id
+                    ) || []
+                ).map(v => [
+                    v.id,
+                    v.name,
+                    v.type,
+                    v.status,
+                    d.byBuilding.get(
+                        v.buildingId
+                    )?.name
+                ]);
+
+            } else {
+                heads = [
+                    'Fahrzeugtyp',
+                    'Gesamt',
+                    'Status 2',
+                    'Status 6',
+                    'Durchschnitt je Wache'
+                ];
+
+                rows = filter(vehicleRows()).map(r => [
+                    r.name,
+                    r.count,
+                    r.status2,
+                    r.status6,
+                    r.avg
+                ]);
+            }
 
         } else if (state.tab === 'extensions') {
             if (state.detail?.kind === 'extension') {
@@ -2595,10 +3506,10 @@
 
                 rows = (ex?.sites || []).map(s => [
                     ex.caption,
-                    d.byBuilding.get(s.buildingId)?.name || '',
+                    d.byBuilding.get(s.buildingId)?.name,
                     s.buildingId,
                     s.center,
-                    s.status
+                    extStatus(s)
                 ]);
 
             } else {
@@ -2610,111 +3521,62 @@
                     'Gekauft'
                 ];
 
-                rows = extensionsGrouped().flatMap(g =>
-                                                   g.items.map(x => [
+                rows = extGroups().flatMap(g =>
+                                           g.items.map(x => [
                     g.org,
                     g.name,
                     x.caption,
                     x.active,
                     x.bought
                 ])
-                                                  );
+                                          );
             }
-
-        } else if (state.tab === 'buildingtypes') {
-            heads = [
-                'Gebäudetyp',
-                'Gesamt',
-                'Normal',
-                'Klein'
-            ];
-
-            rows = filtered(familyRows()).map(x => [
-                x.name,
-                x.count,
-                x.normal,
-                x.small
-            ]);
-
-        } else if (state.tab === 'vehicletypes') {
-            heads = [
-                'Fahrzeugtyp',
-                'Anzahl'
-            ];
-
-            rows = filtered(vehicleRows()).map(x => [
-                x.name,
-                x.count
-            ]);
 
         } else if (state.tab === 'stations') {
             heads = [
-                'Gebäude-ID',
+                'ID',
                 'Wache',
                 'Gebäudetyp',
                 'Kleinwache',
                 'Organisation',
-                'Leitstellen-ID',
-                'Fahrzeuge',
-                'Typen'
+                'Personal',
+                'Fahrzeuge'
             ];
 
-            rows = filtered(
-                d.stations.map(s => ({
-                    ...s,
-                    count: s.vehicles
-                }))
-            ).map(s => [
+            rows = filter(d.stations).map(s => [
                 s.id,
                 s.name,
                 s.type,
                 s.small ? 'ja' : 'nein',
                 s.org,
-                s.center,
-                s.vehicles,
-                sorted(s.byType)
-                .map(x => x.join(': '))
-                .join(' | ')
+                s.personal,
+                s.vehicles
             ]);
 
         } else if (state.tab === 'centers') {
             heads = [
-                'Leitstellen-ID',
+                'ID',
                 'Leitstelle',
                 'Gebäude',
-                'Fahrzeuge',
-                'Gebäudetypen',
-                'Fahrzeugtypen'
+                'Fahrzeuge'
             ];
 
-            rows = filtered(
-                d.centers.map(c => ({
-                    ...c,
-                    count: c.vehicles
-                }))
-            ).map(c => [
+            rows = filter(d.centers).map(c => [
                 c.id,
                 c.name,
                 c.buildings,
-                c.vehicles,
-                sorted(c.byBuilding)
-                .map(x => x.join(': '))
-                .join(' | '),
-                sorted(c.byVehicle)
-                .map(x => x.join(': '))
-                .join(' | ')
+                c.vehicles
             ]);
         }
 
-        const quote = x =>
-        '"' +
-              String(x ?? '').replace(/"/g, '""') +
-              '"';
-
         const csv = '\ufeff' +
-              [heads, ...rows]
-        .map(r => r.map(quote).join(';'))
-        .join('\r\n');
+              [heads, ...rows].map(r =>
+                                   r.map(x =>
+                                         '"' +
+                                         String(x ?? '').replace(/"/g, '""') +
+                                         '"'
+                                        ).join(';')
+                                  ).join('\r\n');
 
         const url = URL.createObjectURL(
             new Blob([csv], {
@@ -2723,7 +3585,6 @@
         );
 
         const a = document.createElement('a');
-
         a.href = url;
 
         a.download =
