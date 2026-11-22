@@ -2,9 +2,9 @@
 // ==UserScript==
 // @name         LSS Statistik-Dashboard
 // @license      MIT
-// @version      2.5.0
+// @version      2.6.0
 // @author       cpu99 x ChatGPT
-// @description  Statistik-Dashboard und Fahrzeug- & Gebäudemanager mit Statusverwaltung, Filtern und Diagrammen
+// @description  Statistik-Dashboard und Fahrzeug- & Gebäudemanager mit Statusverwaltung und Personalverwalter, Filtern und Diagrammen
 // @namespace    local.lss.statistics
 // @match        https://www.leitstellenspiel.de/
 // @match        https://leitstellenspiel.de/
@@ -60,7 +60,7 @@
     // EINSTELLUNGEN
     // ==========================================
 
-    const MIN_CHART_COUNT = 4; // Unterhalb dieser Anzahl werden Typen als „Sonstige“ zusammengefasst.
+    const MIN_CHART_COUNT = 10; // Unterhalb dieser Anzahl werden Typen als „Sonstige“ zusammengefasst.
     const PAGE_LIMIT = 4000; // Maximale Anzahl der Datensätze pro API-Abfrage. maximal 8.000 je kleiner die Zahl, desto geringer das Risiko eines Timeouts
     const PAGE_ROWS = 100; // Anzahl der sichtbaren Tabellenzeilen pro Seite.
 
@@ -71,7 +71,9 @@
         'Feuerwehr',
         'Rettungsdienst',
         'Polizei',
-        'THW'
+        'THW',
+        'Leitstellen',
+        'Weitere'
     ];
 
     const COLORS = [
@@ -115,6 +117,13 @@
         buildingCenter: 'all',
         buildingStatus: 'all',
         buildingSize: 'all',
+        personnelCenter: 'all',
+        personnelType: 'all',
+        personnelFilter: 'all',
+        personnelTarget: 80,
+        personnelPhase: 3,
+        personnelPending: null,
+        personnelMessage: '',
         buildingBulkPending: null
     };
 
@@ -146,20 +155,58 @@
     const sleep = ms =>
     new Promise(r => setTimeout(r, ms));
 
-    const orgFor = (id, name) => {
-        if (FAMILIES[id]) return FAMILIES[id][2];
 
-        if (/thw|ortsverband/i.test(name)) return 'THW';
-        if (/polizei|justiz/i.test(name)) return 'Polizei';
+    // ==========================================
+    // ORGANISATIONSZUORDNUNG NACH GEBÄUDETYP-ID
+    // ==========================================
 
-        if (
-            /rettungs|krankenhaus|notarzt|wasserrettung|bergwacht|schnelleinsatzgruppe/i.test(name)
-        ) return 'Rettungsdienst';
+    const ORGANIZATION_TYPES = {
+        // Feuerwehr
+        0: 'Feuerwehr',          // Feuerwache
+        1: 'Feuerwehr',          // Feuerwehrschule
+        18: 'Feuerwehr',         // Feuerwache (Kleinwache)
 
-        if (/feuer/i.test(name)) return 'Feuerwehr';
+        // Rettungsdienst und Rettungsorganisationen
+        2: 'Rettungsdienst',     // Rettungswache
+        3: 'Rettungsdienst',     // Rettungsschule
+        4: 'Rettungsdienst',     // Krankenhaus
+        5: 'Rettungsdienst',     // Rettungshubschrauber-Station
+        12: 'Rettungsdienst',    // Schnelleinsatzgruppe (SEG)
+        15: 'Rettungsdienst',    // Wasserrettung
+        20: 'Rettungsdienst',    // Rettungswache (Kleinwache)
+        21: 'Rettungsdienst',    // Rettungshundestaffel
+        25: 'Rettungsdienst',    // Bergrettungswache
+        26: 'Rettungsdienst',    // Seenotrettungswache
+        27: 'Rettungsdienst',    // Schule für Seefahrt und Seenotrettung
+        28: 'Rettungsdienst',    // Hubschrauberstation (Seenotrettung)
 
-        return 'Weitere';
+        // Polizei
+        6: 'Polizei',           // Polizeiwache
+        8: 'Polizei',           // Polizeischule
+        11: 'Polizei',          // Bereitschaftspolizei
+        13: 'Polizei',          // Polizeihubschrauberstation
+        16: 'Polizei',          // Verbandszellen
+        17: 'Polizei',          // Polizei-Sondereinheiten
+        19: 'Polizei',          // Polizeiwache (Kleinwache)
+        24: 'Polizei',          // Reiterstaffel
+        29: 'Polizei',          // Autobahnpolizei
+
+        // Technisches Hilfswerk
+        9: 'THW',               // THW-Ortsverband
+        10: 'THW',              // THW-Bundesschule
+
+        // Leitstellen
+        7: 'Leitstellen',       // Leitstelle
+
+        // Sonstige Gebäude
+        14: 'Weitere',          // Bereitstellungsraum
+        22: 'Weitere',          // Großer Gebäudekomplex
+        23: 'Weitere'           // Kleiner Gebäudekomplex
     };
+
+    const orgFor = id =>
+    ORGANIZATION_TYPES[Number(id)] ?? 'Weitere';
+
 
     const hrefB = s => `
    <a
@@ -582,6 +629,26 @@
    stroke:var(--panel)!important;
    stroke-width:2px!important;
  }
+ /* ==========================================
+   PERSONALVERWALTUNG
+   ========================================== */
+
+#lssstat-root .lssstat-personnel-table {
+    min-width: 1100px !important;
+}
+
+#lssstat-root .lssstat-personnel-table td {
+    vertical-align: middle !important;
+}
+
+#lssstat-root .lssstat-personnel-table .actions {
+    flex-wrap: wrap !important;
+}
+
+#lssstat-root .lssstat-personnel-table .actions button {
+    font-size: 14px !important;
+    padding: 5px 9px !important;
+}
 
  #lssstat-root .chart-focus {
    margin-top:10px!important;
@@ -625,6 +692,13 @@
    margin:12px 0!important;
    background:var(--panel)!important;
  }
+ /* Breite Wachenliste mit horizontalem Scrollen */
+
+#lssstat-root .tablebox:has(
+    table.lssstat-stations-table
+) table {
+    min-width: 1250px !important;
+}
 
  @media(max-width:700px) {
    #lssstat-root {
@@ -1022,7 +1096,25 @@
                 small,
                 center,
                 vehicles: 0,
+
+                // Personal und Personalwerbung
                 personal: Number(b.personal_count) || 0,
+
+                personalTarget:
+                b.personal_count_target == null
+                ? null
+                : Number(b.personal_count_target),
+
+                hiringAutomatic:
+                typeof b.hiring_automatic === 'boolean'
+                ? b.hiring_automatic
+                : null,
+
+                hiringPhase:
+                b.hiring_phase == null
+                ? null
+                : Number(b.hiring_phase),
+
                 extBought: 0,
                 extActive: 0,
                 byType: {}
@@ -1361,6 +1453,7 @@
         ['vehicletypes', 'Fahrzeugtypen'],
         ['extensions', 'Erweiterungen'],
         ['stations', 'Einzelne Wachen'],
+        ['personnel', 'Personalverwaltung'],
         ['centers', 'Leitstellenbereiche']
     ];
 
@@ -2129,49 +2222,60 @@
    `;
     }
 
+
     function charts() {
+        // Nur diese vier Organisationen in Diagrammen anzeigen
+        const chartOrgs = [
+            'Feuerwehr',
+            'Rettungsdienst',
+            'Polizei',
+            'THW'
+        ];
+
         return `
-     <div
-       class="toolbar"
-       style="margin:10px 0"
-     >
-       <button
-         id="lssstat-charts"
-         class="${state.charts ? 'primary' : ''}"
-       >
-         ${state.charts
+        <div class="toolbar" style="margin:10px 0">
+            <button
+                id="lssstat-charts"
+                class="${state.charts ? 'primary' : ''}"
+            >
+                ${state.charts
             ? 'Diagramme ausblenden'
         : 'Kuchendiagramme anzeigen'}
-       </button>
+            </button>
 
-       ${state.charts ? `
-         <button
-           data-mode="absolute"
-           class="${state.mode === 'absolute'
+            ${state.charts ? `
+                <button
+                    data-mode="absolute"
+                    class="${state.mode === 'absolute'
             ? 'primary' : ''}"
-         >Absolut</button>
+                >
+                    Absolut
+                </button>
 
-         <button
-           data-mode="relative"
-           class="${state.mode === 'relative'
+                <button
+                    data-mode="relative"
+                    class="${state.mode === 'relative'
             ? 'primary' : ''}"
-         >Relativ (100 %)</button>
+                >
+                    Relativ (100 %)
+                </button>
 
-         <span class="muted">
-           Unter ${MIN_CHART_COUNT} → Sonstige
-         </span>
-       ` : ''}
-     </div>
+                <span class="muted">
+                    Unter ${MIN_CHART_COUNT} → Sonstige
+                </span>
+            ` : ''}
+        </div>
 
-     ${state.charts ? `
-       <div class="charts">
-         ${ORGS.map(o =>
-                    chart(o, state.tab)
-                   ).join('')}
-       </div>
-     ` : ''}
-   `;
+        ${state.charts ? `
+            <div class="charts">
+                ${chartOrgs
+            .map(org => chart(org, state.tab))
+            .join('')}
+            </div>
+        ` : ''}
+    `;
     }
+
 
     function bindCharts() {
         for (
@@ -2208,7 +2312,7 @@
                 node.querySelector('.pie-value')
                     .textContent = x
                     ? `${fmt(x.n)} · ${
-               (100 * x.n / total).toLocaleString(
+                        (100 * x.n / total).toLocaleString(
                     'de-DE',
                     { maximumFractionDigits: 2 }
                 )
@@ -2218,12 +2322,12 @@
                 node.querySelector('.chart-focus')
                     .textContent = x
                     ? `${x.name}: ${fmt(x.n)} (${
-               (100 * x.n / total).toLocaleString(
+                                               (100 * x.n / total).toLocaleString(
                     'de-DE',
                     { maximumFractionDigits: 2 }
                 )
             } %)${
-               x.small
+    x.small
                     ? ` · davon ${fmt(x.small)} Kleinwachen`
                  : ''
             }`
@@ -2254,19 +2358,19 @@
     function centerSelect() {
         return `
      <div
-       class="toolbar"
-       style="margin:10px 0"
-     >
-       <label for="lssstat-center">
-         Leitstellenbereich:
-       </label>
+class="toolbar"
+style="margin:10px 0"
+>
+    <label for="lssstat-center">
+        Leitstellenbereich:
+            </label>
 
-       <select id="lssstat-center">
-         <option value="all">
-           Alle Leitstellenbereiche
-         </option>
+<select id="lssstat-center">
+    <option value="all">
+        Alle Leitstellenbereiche
+            </option>
 
-         ${state.data.centers
+${state.data.centers
             .slice()
             .sort((a, b) =>
                   a.name.localeCompare(b.name, 'de')
@@ -2278,14 +2382,14 @@
                  ? 'selected' : ''}
              >${esc(c.name)}</option>
            `).join('')}
-       </select>
+</select>
 
-       <span class="muted">
-         Aktiviert / Gekauft
-         (im Bau zählt als gekauft)
-       </span>
-     </div>
-   `;
+<span class="muted">
+    Aktiviert / Gekauft
+(im Bau zählt als gekauft)
+</span>
+</div>
+`;
     }
 
     function selectedExtensions() {
@@ -2386,21 +2490,21 @@
 
             body += `
        <tr>
-         <td>
-           <button
-             class="linkbtn"
-             data-expand="org:${esc(org)}"
-           >
-             ${opened ? '▾' : '▸'} ${esc(org)}
-           </button>
-         </td>
+    <td>
+    <button
+class="linkbtn"
+data-expand="org:${esc(org)}"
+>
+    ${opened ? '▾' : '▸'} ${esc(org)}
+</button>
+</td>
 
-         <td class="num">
-           <b>${fmt(active)} / ${fmt(bought)}</b>
-         </td>
-         <td></td>
-       </tr>
-     `;
+<td class="num">
+    <b>${fmt(active)} / ${fmt(bought)}</b>
+        </td>
+<td></td>
+</tr>
+`;
 
             if (!opened) continue;
 
@@ -2420,22 +2524,22 @@
 
                 body += `
          <tr class="subrow">
-           <td class="indent">
-             <button
-               class="linkbtn"
-               data-expand="${esc(key)}"
-             >
-               ${open ? '▾' : '▸'}
-               ${esc(g.name)}
-             </button>
-           </td>
+             <td class="indent">
+                 <button
+class="linkbtn"
+data-expand="${esc(key)}"
+>
+    ${open ? '▾' : '▸'}
+${esc(g.name)}
+</button>
+</td>
 
-           <td class="num">
-             ${fmt(a)} / ${fmt(b)}
-           </td>
-           <td></td>
-         </tr>
-       `;
+<td class="num">
+    ${fmt(a)} / ${fmt(b)}
+</td>
+<td></td>
+</tr>
+`;
 
 
                 if (open) {
@@ -2463,45 +2567,45 @@
 
                         body += `
             <tr>
-                <td style="padding-left:45px!important">
-                    <button
-                        class="linkbtn"
-                        data-extension="${esc(x.key)}"
-                    >
-                        ↳ ${esc(x.caption)}
-                    </button>
-                </td>
+        <td style="padding-left:45px!important">
+            <button
+class="linkbtn"
+data-extension="${esc(x.key)}"
+>
+    ↳ ${esc(x.caption)}
+</button>
+</td>
 
-                <td class="num">
-                    ${fmt(x.active)} / ${fmt(x.bought)}
-                </td>
+<td class="num">
+    ${fmt(x.active)} / ${fmt(x.bought)}
+</td>
 
-                <td>
-                    <div class="actions">
-                        <button
-                            data-row-bulk="activate"
-                            data-row-extension="${esc(x.key)}"
-                            ${locked || !canActivate
+<td>
+        <div class="actions">
+            <button
+data-row-bulk="activate"
+data-row-extension="${esc(x.key)}"
+${locked || !canActivate
                             ? 'disabled' : ''}
-                        >
-                            Alle aktivieren
-                            (${fmt(canActivate)})
-                        </button>
+>
+    Alle aktivieren
+    (${fmt(canActivate)})
+        </button>
 
-                        <button
-                            data-row-bulk="deactivate"
-                            data-row-extension="${esc(x.key)}"
-                            class="danger"
-                            ${locked || !canDeactivate
+<button
+data-row-bulk="deactivate"
+data-row-extension="${esc(x.key)}"
+class="danger"
+${locked || !canDeactivate
                             ? 'disabled' : ''}
-                        >
-                            Alle deaktivieren
-                            (${fmt(canDeactivate)})
-                        </button>
-                    </div>
-                </td>
-            </tr>
-        `;
+>
+    Alle deaktivieren
+    (${fmt(canDeactivate)})
+        </button>
+</div>
+</td>
+</tr>
+`;
                     }
                 }
 
@@ -2515,7 +2619,7 @@
         Nur verfügbare und eingeschaltete Erweiterungen
         gelten als aktiviert. Änderungen erfolgen
         ausschließlich nach Bestätigung.
-    </div>
+            </div>
 ` + table(
             [
                 ['Organisation / Gebäudetyp / Erweiterung'],
@@ -2540,13 +2644,13 @@
         if (!ex) {
             return centerSelect() + `
        <button id="lssstat-back">
-         ← Zurück
-       </button>
+           ← Zurück
+               </button>
 
-       <div class="notice">
-         Keine Einträge im gewählten Leitstellenbereich.
-       </div>
-     `;
+<div class="notice">
+    Keine Einträge im gewählten Leitstellenbereich.
+        </div>
+`;
         }
 
         const q = low(state.search.trim());
@@ -2607,10 +2711,10 @@
 
         const buttons = `
      <div
-       class="toolbar"
-       style="margin:10px 0"
-     >
-       ${state.writeNeedsRefresh
+class="toolbar"
+style="margin:10px 0"
+>
+    ${state.writeNeedsRefresh
         ? `
            <span class="notice">
              Nach Änderungen zuerst Daten neu laden.
@@ -2618,52 +2722,52 @@
          `
          : ''}
 
-       <button
-         data-bulk="activate"
-         ${inactive &&
+<button
+data-bulk="activate"
+${inactive &&
               !state.writing &&
               !state.writeNeedsRefresh
         ? '' : 'disabled'}
-       >
-         Alle deaktivierten aktivieren
-         (${fmt(inactive)})
-       </button>
+>
+    Alle deaktivierten aktivieren
+    (${fmt(inactive)})
+        </button>
 
-       <button
-         data-bulk="deactivate"
-         class="danger"
-         ${active &&
+<button
+data-bulk="deactivate"
+class="danger"
+${active &&
               !state.writing &&
               !state.writeNeedsRefresh
         ? '' : 'disabled'}
-       >
-         Alle aktiven deaktivieren
-         (${fmt(active)})
-       </button>
-     </div>
-   `;
+>
+    Alle aktiven deaktivieren
+    (${fmt(active)})
+        </button>
+</div>
+`;
 
         const body = items.map(x => `
      <tr>
-       <td>
-         ${x.st
+            <td>
+            ${x.st
                                ? hrefB(x.st)
                                : esc(x.buildingId)}
-       </td>
+</td>
 
-       <td>
-         ${esc(x.st?.type || 'Unbekannt')}
-       </td>
+<td>
+    ${esc(x.st?.type || 'Unbekannt')}
+</td>
 
-       <td>
-         <span class="stat">
-           ${extStatus(x)}
-         </span>
-       </td>
+<td>
+    <span class="stat">
+        ${extStatus(x)}
+</span>
+</td>
 
-       <td>
-         <div class="actions">
-           ${x.available ? `
+<td>
+    <div class="actions">
+        ${x.available ? `
              <button
                data-single="${esc(x.buildingId)}"
                data-target="${x.enabled ? 'off' : 'on'}"
@@ -2678,25 +2782,25 @@
                                : 'Aktivieren'}
              </button>
            ` : 'Im Bau'}
-         </div>
-       </td>
-     </tr>
-   `).join('');
+</div>
+</td>
+</tr>
+`).join('');
 
         return centerSelect() + `
      <button id="lssstat-back">
-       ← Zurück zu Erweiterungen
-     </button>
+         ← Zurück zu Erweiterungen
+             </button>
 
-     <h3>
-       ${esc(ex.caption)} –
-       ${fmt(ex.active)} aktiviert /
-       ${fmt(ex.bought)} gekauft
-     </h3>
+<h3>
+             ${esc(ex.caption)} –
+             ${fmt(ex.active)} aktiviert /
+                 ${fmt(ex.bought)} gekauft
+                     </h3>
 
-     ${buttons}
+${buttons}
 ${detailFilters('extension')}
-     ${table(
+${table(
             [
                 ['Wache'],
                 ['Gebäudetyp'],
@@ -2707,73 +2811,73 @@ ${detailFilters('extension')}
             ['35%', '25%', '18%', '22%']
         )}
 
-     ${pageCtl}
-   `;
+${pageCtl}
+`;
     }
 
     function detailFilters(kind, statuses = []) {
         const options = kind === 'vehicle'
         ? statuses.map(value => `
             <option
-                value="${esc(value)}"
-                ${state.detailStatus === value
+value="${esc(value)}"
+${state.detailStatus === value
                        ? 'selected' : ''}
-            >${value === '2'
+>${value === '2'
                        ? 'S2 – Einsatzbereit'
                        : 'S6 – Nicht einsatzbereit'}</option>
-        `).join('')
+`).join('')
         : [
             ['active', 'Aktiv'],
             ['inactive', 'Deaktiviert'],
             ['construction', 'Im Bau']
         ].map(([value, label]) => `
             <option
-                value="${value}"
-                ${state.detailStatus === value
+value="${value}"
+${state.detailStatus === value
               ? 'selected' : ''}
-            >${label}</option>
-        `).join('');
+>${label}</option>
+`).join('');
 
         return `
         <div class="toolbar" style="margin:12px 0">
             <label for="lssstat-detail-status">
                 Status:
-            </label>
+                    </label>
 
-            <select id="lssstat-detail-status">
-                <option value="all">Alle Status</option>
-                ${options}
-            </select>
+<select id="lssstat-detail-status">
+    <option value="all">Alle Status</option>
+${options}
+</select>
 
-            <label for="lssstat-detail-sort">
-                Sortieren nach:
-            </label>
+<label for="lssstat-detail-sort">
+    Sortieren nach:
+</label>
 
-            <select id="lssstat-detail-sort">
-                <option value="name"
-                    ${state.detailSort === 'name'
+<select id="lssstat-detail-sort">
+    <option value="name"
+${state.detailSort === 'name'
             ? 'selected' : ''}>
-                    ${kind === 'vehicle'
+        ${kind === 'vehicle'
             ? 'Fahrzeugname'
         : 'Wachenname'}
-                </option>
+</option>
 
-                <option value="status"
-                    ${state.detailSort === 'status'
+<option value="status"
+${state.detailSort === 'status'
             ? 'selected' : ''}>
-                    Status
-                </option>
+        Status
+</option>
 
-                ${kind === 'vehicle' ? `
+${kind === 'vehicle' ? `
                     <option value="station"
                         ${state.detailSort === 'station'
             ? 'selected' : ''}>
                         Wache
                     </option>
                 ` : ''}
-            </select>
-        </div>
-    `;
+</select>
+</div>
+`;
     }
 
     // ==========================================
@@ -2842,51 +2946,51 @@ ${detailFilters('extension')}
 
         const body = items.map(v => `
      <tr>
-       <td>
-         <a
-           target="_blank"
-           rel="noopener"
-           href="/vehicles/${encodeURIComponent(v.id)}"
-         >${esc(v.name)}</a>
-       </td>
+    <td>
+    <a
+target="_blank"
+rel="noopener"
+href="/vehicles/${encodeURIComponent(v.id)}"
+>${esc(v.name)}</a>
+</td>
 
-       <td>
-         ${displayStatus(v.status) === '2'
+<td>
+    ${displayStatus(v.status) === '2'
                                ? 'S2 – Einsatzbereit'
                                : displayStatus(v.status) === '6'
                                ? 'S6 – Nicht einsatzbereit'
                                : 'Unbekannt'}
-       </td>
+</td>
 
-       <td>
-         ${state.data.byBuilding.has(v.buildingId)
+<td>
+    ${state.data.byBuilding.has(v.buildingId)
                                ? hrefB(
             state.data.byBuilding.get(v.buildingId)
         )
                                : 'Nicht zugeordnet'}
-       </td>
+</td>
 
-       <td class="num">
-         ${esc(v.id)}
-       </td>
-     </tr>
-   `).join('');
+<td class="num">
+    ${esc(v.id)}
+</td>
+</tr>
+`).join('');
 
         return `
      <button id="lssstat-back">
-       ← Zurück zu Fahrzeugtypen
-     </button>
+         ← Zurück zu Fahrzeugtypen
+             </button>
 
-     <h3>
-       ${esc(state.detail.name)} –
-       ${fmt(rows.length)} Fahrzeuge
-     </h3>
+<h3>
+             ${esc(state.detail.name)} –
+             ${fmt(rows.length)} Fahrzeuge
+                 </h3>
 
-     <div class="notice">
-       FMS-Status zum Zeitpunkt des letzten Ladens.
-     </div>
+<div class="notice">
+    FMS-Status zum Zeitpunkt des letzten Ladens.
+        </div>
 ${detailFilters('vehicle', statuses)}
-     ${table(
+${table(
             [
                 ['Fahrzeug'],
                 ['Status'],
@@ -2897,8 +3001,8 @@ ${detailFilters('vehicle', statuses)}
             ['32%', '14%', '42%', '12%']
         )}
 
-     ${pageCtl}
-   `;
+${pageCtl}
+`;
     }
 
     // ==========================================
@@ -2960,15 +3064,15 @@ ${detailFilters('vehicle', statuses)}
 
         return `
      <div class="confirmbox">
-       <h3>${esc(p.description)}</h3>
+         <h3>${esc(p.description)}</h3>
 
-       <p>
-         ${fmt(p.ready.length)}
-         Erweiterungen werden
-         ${p.target ? 'aktiviert' : 'deaktiviert'}.
-       </p>
+<p>
+             ${fmt(p.ready.length)}
+Erweiterungen werden
+${p.target ? 'aktiviert' : 'deaktiviert'}.
+    </p>
 
-       ${p.blocked ? `
+${p.blocked ? `
          <p class="notice">
            ${fmt(p.blocked)} Einträge können wegen
            fehlender eindeutiger Zuordnung nicht
@@ -2976,30 +3080,30 @@ ${detailFilters('vehicle', statuses)}
          </p>
        ` : ''}
 
-       <p class="muted">
-         Der Schreib-Endpunkt schaltet den Zustand um.
-         Nur fertiggestellte Erweiterungen mit
-         abweichendem Status werden ausgewählt.
-         Nach der Änderung müssen die Daten
-         aktualisiert und kontrolliert werden.
-       </p>
+<p class="muted">
+    Der Schreib-Endpunkt schaltet den Zustand um.
+    Nur fertiggestellte Erweiterungen mit
+    abweichendem Status werden ausgewählt.
+    Nach der Änderung müssen die Daten
+    aktualisiert und kontrolliert werden.
+        </p>
 
-       <div class="actions">
-         <button id="lssstat-write-cancel">
-           Zurück
-         </button>
+<div class="actions">
+    <button id="lssstat-write-cancel">
+        Zurück
+</button>
 
-         <button
-           id="lssstat-write-confirm"
-           class="primary"
-           ${p.ready.length ? '' : 'disabled'}
-         >
-           ${fmt(p.ready.length)}
-           Änderungen bestätigen
-         </button>
-       </div>
-     </div>
-   `;
+<button
+id="lssstat-write-confirm"
+class="primary"
+${p.ready.length ? '' : 'disabled'}
+>
+    ${fmt(p.ready.length)}
+Änderungen bestätigen
+    </button>
+</div>
+</div>
+`;
     }
 
     // ==========================================
@@ -3339,6 +3443,909 @@ ${detailFilters('vehicle', statuses)}
 
 
     // ==========================================
+    // PERSONALVERWALTUNG – VERSION 2.6.0
+    // ==========================================
+
+    // ==========================================
+    // GEBÄUDETYPEN MIT PERSONALVERWALTUNG
+    // ==========================================
+
+    const PERSONNEL_BUILDING_TYPES = new Set([
+        0,  // Feuerwache
+        2,  // Rettungswache
+        5,  // Rettungshubschrauber-Station
+        6,  // Polizeiwache
+        9,  // THW-Ortsverband
+        11, // Bereitschaftspolizei
+        12, // Schnelleinsatzgruppe
+        13, // Polizeihubschrauberstation
+        15, // Wasserrettung
+        17, // Polizei-Sondereinheiten
+        18, // Feuerwache (Kleinwache)
+        19, // Polizeiwache (Kleinwache)
+        20, // Rettungswache (Kleinwache)
+        21, // Rettungshundestaffel
+        24, // Reiterstaffel
+        25, // Bergrettungswache
+        26, // Seenotrettungswache
+        28, // Hubschrauberstation (Seenotrettung)
+        29  // Autobahnpolizei
+    ]);
+
+    function supportsPersonnel(building) {
+        return PERSONNEL_BUILDING_TYPES.has(
+            Number(building.typeId ?? building.building_type)
+        );
+    }
+
+    function personnelRows() {
+        const q = low(state.search.trim());
+
+        return state.data.stations
+            .filter(s => {
+            // Nur Gebäudetypen mit Personalverwaltung
+            if (!supportsPersonnel(s)) return false;
+
+            if (
+                state.personnelCenter !== 'all' &&
+                s.center !== state.personnelCenter
+            ) return false;
+
+            if (
+                state.personnelType !== 'all' &&
+                s.typeId !== state.personnelType
+            ) return false;
+
+            const target = Number(state.personnelTarget);
+
+            if (state.personnelFilter === 'different' &&
+                s.personalTarget === target) return false;
+
+            if (state.personnelFilter === 'missing' &&
+                Number(s.personalTarget) > 0) return false;
+
+            if (state.personnelFilter === 'under' &&
+                !(Number.isFinite(s.personalTarget) &&
+                  s.personalTarget > s.personal)) return false;
+
+            if (state.personnelFilter === 'noauto' &&
+                s.hiringAutomatic !== false) return false;
+
+            return !q || [
+                s.name, s.type, s.org, s.id
+            ].some(x => low(x).includes(q));
+        })
+            .sort((a, b) =>
+                  a.name.localeCompare(b.name, 'de', {
+            numeric: true
+        })
+                 );
+    }
+
+    function personnelPremium() {
+        // Tampermonkey kann ein isoliertes window bereitstellen.
+        if (typeof unsafeWindow !== 'undefined' &&
+            typeof unsafeWindow.user_premium === 'boolean') {
+            return unsafeWindow.user_premium;
+        }
+
+        if (typeof window.user_premium === 'boolean') {
+            return window.user_premium;
+        }
+
+        return null; // Unbekannt, nicht automatisch "kein Premium"
+    }
+
+    function personnelSelect(id, value, options) {
+        return `
+            <select id="${id}">
+                ${options.map(([v, label]) => `
+                    <option value="${esc(v)}"
+                        ${String(v) === String(value)
+                              ? 'selected' : ''}>
+                        ${esc(label)}
+                    </option>
+                `).join('')}
+            </select>
+        `;
+    }
+
+    function personnelView() {
+        const rows = personnelRows();
+
+        const validTarget =
+              Number.isSafeInteger(Number(state.personnelTarget)) &&
+              Number(state.personnelTarget) > 0;
+
+        const needTarget = rows.filter(s =>
+                                       validTarget &&
+                                       s.personalTarget !== Number(state.personnelTarget)
+                                      );
+
+        const needAuto = rows.filter(s =>
+                                     s.hiringAutomatic === false &&
+                                     Number(s.personalTarget) > 0
+                                    );
+
+        const premium = personnelPremium();
+
+        const disabled =
+              state.writing ||
+              state.loading ||
+              state.pending ||
+              state.personnelPending ||
+              state.writeNeedsRefresh ||
+              (typeof v24Busy !== 'undefined' && v24Busy);
+
+        const types = [
+            ...new Map(
+                state.data.stations
+                .filter(s => s.typeId !== '7')
+                .map(s => [s.typeId, s.type])
+            ).entries()
+        ].sort((a, b) => a[1].localeCompare(b[1], 'de'));
+
+        const centers = state.data.centers
+        .slice()
+        .sort((a, b) =>
+              a.name.localeCompare(b.name, 'de')
+             )
+        .map(c => [c.id, c.name]);
+
+        const { items, pageCtl } = pageRows(rows);
+
+        const pending = state.personnelPending;
+
+        return `
+            <h3>Personalverwaltung</h3>
+
+            <div class="notice">
+                Personalziel und automatische Werbung
+                für einzelne oder mehrere Wachen verwalten.
+                Die Änderungen werden nach jeder Aktion
+                vom Server überprüft.
+            </div>
+
+            <div class="toolbar" style="margin:12px 0">
+                <label>
+                    Leitstellenbereich:
+                    ${personnelSelect(
+            'lssstat-personnel-center',
+            state.personnelCenter,
+            [['all', 'Alle Leitstellen'], ...centers]
+        )}
+                </label>
+
+                <label>
+                    Gebäudetyp:
+                    ${personnelSelect(
+            'lssstat-personnel-type',
+            state.personnelType,
+            [['all', 'Alle Gebäudetypen'], ...types]
+        )}
+                </label>
+
+                <label>
+                    Anzeigen:
+                    ${personnelSelect(
+            'lssstat-personnel-filter',
+            state.personnelFilter,
+            [
+                ['all', 'Alle Wachen'],
+                ['different', 'Soll weicht vom Eingabewert ab'],
+                ['missing', 'Kein Personal-Soll'],
+                ['under', 'Personal unter aktuellem Soll'],
+                ['noauto', 'Automatische Werbung aus']
+            ]
+        )}
+                </label>
+            </div>
+
+            <div class="toolbar" style="margin:12px 0">
+                <label>
+                    Gewünschtes Personal-Soll:
+                    <input
+                        id="lssstat-personnel-target"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value="${esc(state.personnelTarget)}"
+                        style="width:110px"
+                    >
+                </label>
+
+                <button
+                    id="lssstat-personnel-bulk-target"
+                    ${disabled || !validTarget ||
+            !needTarget.length ? 'disabled' : ''}
+                >
+                    ${fmt(needTarget.length)}
+                    Personalziele anpassen
+                </button>
+
+                <button
+                    id="lssstat-personnel-bulk-auto"
+                    ${disabled || premium !== true ||
+            !needAuto.length ? 'disabled' : ''}
+                >
+                    ${fmt(needAuto.length)}
+                    automatische Werbungen starten
+                </button>
+
+<label>
+    Werbedauer:
+    ${personnelSelect(
+            'lssstat-personnel-phase',
+            state.personnelPhase,
+            [
+                ['1', '1 Tag'],
+                ['2', '2 Tage'],
+                ['3', '3 Tage']
+            ]
+        )}
+</label>
+
+<button
+    id="lssstat-personnel-bulk-phase"
+    ${disabled || !rows.some(s =>
+                             s.hiringAutomatic === false &&
+                             s.hiringPhase === 0
+                            ) ? 'disabled' : ''}
+>
+    Werbephase bei ${fmt(rows.filter(s =>
+                                     s.hiringAutomatic === false &&
+                                     s.hiringPhase === 0
+                                    ).length)} Wachen starten
+</button>
+
+            </div>
+
+            <div class="notice">
+                <b>${fmt(rows.length)}</b> Wachen gefunden ·
+                <b>${fmt(needTarget.length)}</b>
+                abweichende Personalziele ·
+                <b>${fmt(needAuto.length)}</b>
+                Wachen mit Soll, aber ohne Werbeautomatik.
+
+                <div class="muted"
+                    style="font-size:14px;margin-top:6px">
+                    Premium:
+                    ${premium === true
+            ? 'Aktiv'
+        : premium === false
+            ? 'Nicht aktiv'
+        : 'Nicht ermittelbar'}
+                    · Die Massenaktionen gelten für alle
+                    gefilterten Wachen, nicht nur die aktuelle Seite.
+                </div>
+            </div>
+
+            ${state.personnelMessage ? `
+                <div class="notice">
+                    ${esc(state.personnelMessage)}
+                </div>
+            ` : ''}
+
+            ${pending ? `
+                <div class="confirmbox">
+                    <h3>Personaländerungen bestätigen</h3>
+
+                    <p>
+                        ${pending.action === 'target'
+            ? `Personal-Soll von
+       <b>${fmt(pending.ids.length)}</b>
+       Wachen auf
+       <b>${fmt(pending.value)}</b> setzen.`
+    : pending.action === 'auto'
+            ? `Automatische Werbung bei
+           <b>${fmt(pending.ids.length)}</b>
+           Wachen einschalten.`
+        : `Manuelle Personalwerbung für
+           <b>${fmt(pending.ids.length)}</b>
+           Wachen für
+           <b>${pending.value} Tage</b> starten.`}
+                    </p>
+
+                    <p class="muted">
+                        Die Auswahl ist eingefroren.
+                        Bereits passende Serverzustände
+                        werden übersprungen.
+                    </p>
+
+                    <div class="actions">
+                        <button id="lssstat-personnel-cancel">
+                            Abbrechen
+                        </button>
+
+                        <button
+                            class="primary"
+                            id="lssstat-personnel-confirm"
+                        >
+                            Änderungen durchführen
+                        </button>
+                    </div>
+                </div>
+            ` : ''}
+
+            ${table(
+            [
+                ['Wache'],
+                ['Gebäudetyp'],
+                ['Personal Ist / Soll', true],
+                ['Werbung'],
+                ['Aktionen']
+            ],
+
+            items.map(s => {
+                const target = s.personalTarget;
+                const phase = s.hiringPhase;
+
+                return `
+                        <tr>
+                            <td>${hrefB(s)}</td>
+
+                            <td>${esc(s.type)}</td>
+
+                            <td class="num">
+                                ${fmt(s.personal)} /
+                                ${target == null
+                    ? '—'
+                : fmt(target)}
+                            </td>
+
+                            <td>
+                                ${s.hiringAutomatic === true
+                    ? 'Automatisch'
+                : s.hiringAutomatic === false
+                    ? 'Nicht automatisch'
+                : 'Unbekannt'}
+
+                                <div class="muted"
+                                    style="font-size:14px">
+                                    Phase:
+                                    ${phase == null
+                    ? '—'
+                : esc(phase)}
+                                </div>
+                            </td>
+
+                            <td>
+                                <div class="actions">
+                                    <button
+                                        data-person-target="${esc(s.id)}"
+                                        ${disabled || !validTarget ||
+                    s.personalTarget ===
+                    Number(state.personnelTarget)
+                    ? 'disabled' : ''}
+                                    >
+                                        Soll setzen
+                                    </button>
+
+                                    <button
+                                        data-person-auto="${esc(s.id)}"
+                                        ${disabled ||
+                    premium !== true ||
+                    s.hiringAutomatic !== false ||
+                    !(Number(s.personalTarget) > 0)
+                    ? 'disabled' : ''}
+                                    >
+                                        Automatik starten
+                                    </button>
+
+<button
+    data-person-phase="${esc(s.id)}"
+    ${disabled ||
+                    s.hiringAutomatic !== false ||
+                    s.hiringPhase !== 0
+                    ? 'disabled' : ''}
+>
+    ${state.personnelPhase} Tage werben
+</button>
+
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+            }).join(''),
+
+            ['26%', '18%', '16%', '16%', '24%']
+        )}
+
+            ${pageCtl}
+        `;
+    }
+
+
+    function personnelPrepare(action, ids) {
+        if (
+            state.writing ||
+            state.loading ||
+            state.pending ||
+            state.personnelPending ||
+            state.writeNeedsRefresh
+        ) return;
+
+        if (!['target', 'auto', 'phase'].includes(action)) {
+            return;
+        }
+
+        if (
+            action === 'auto' &&
+            personnelPremium() !== true
+        ) {
+            state.personnelMessage =
+                'Premiumstatus nicht bestätigt.';
+            render();
+            return;
+        }
+
+        const target = Number(state.personnelTarget);
+        const phase = Number(state.personnelPhase);
+
+        if (
+            action === 'target' &&
+            (!Number.isSafeInteger(target) || target <= 0)
+        ) {
+            state.personnelMessage =
+                'Bitte ein gültiges Personalziel eingeben.';
+            render();
+            return;
+        }
+
+        if (
+            action === 'phase' &&
+            ![1, 2, 3].includes(phase)
+        ) {
+            state.personnelMessage =
+                'Bitte eine Werbedauer von 1 bis 3 Tagen wählen.';
+            render();
+            return;
+        }
+
+        const allowed = new Set(
+            personnelRows().map(s => s.id)
+        );
+
+        const selected = [...new Set(ids)]
+        .filter(id => allowed.has(id))
+        .filter(id => {
+            const s = state.data.byBuilding.get(id);
+
+            if (!s || !supportsPersonnel(s)) {
+                return false;
+            }
+
+            if (action === 'target') {
+                return s.personalTarget !== target;
+            }
+
+            if (action === 'auto') {
+                return s.hiringAutomatic === false &&
+                    Number(s.personalTarget) > 0;
+            }
+
+            // Eine laufende oder automatische
+            // Personalwerbung nicht überschreiben.
+            return s.hiringAutomatic === false &&
+                s.hiringPhase === 0;
+        });
+
+        if (!selected.length) return;
+
+        state.personnelPending = {
+            action,
+            ids: selected,
+            value:
+            action === 'target' ? target :
+            action === 'phase' ? phase : null
+        };
+
+        render();
+        $('#lssstat-content').scrollTop = 0;
+    }
+
+
+    async function personnelServerBuilding(id) {
+        const response = await fetch(
+            `/api/buildings/${encodeURIComponent(id)}`,
+            {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: { Accept: 'application/json' }
+            }
+        );
+
+        if (!response.ok) {
+            throw Error(`Gebäude-API: HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const building = data.result ?? data;
+
+        if (String(building.id) !== String(id)) {
+            throw Error('Falsche Gebäude-ID zurückgegeben');
+        }
+
+        return building;
+    }
+
+    async function personnelWriteTarget(id, target) {
+        const token = document.querySelector(
+            'meta[name="csrf-token"]'
+        )?.content;
+
+        if (!token) throw Error('CSRF-Token fehlt');
+
+        const body = new URLSearchParams({
+            utf8: '✓',
+            _method: 'put',
+            authenticity_token: token,
+            'building[personal_count_target]': String(target)
+        });
+
+        const response = await fetch(
+            `/buildings/${encodeURIComponent(id)}` +
+            '?personal_count_target_only=1',
+            {
+                method: 'POST',
+                credentials: 'same-origin',
+                redirect: 'follow',
+                headers: {
+                    'Content-Type':
+                    'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-CSRF-Token': token,
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body
+            }
+        );
+
+        if (
+            !response.ok ||
+            new URL(response.url).pathname.includes('sign_in')
+        ) {
+            throw Error(
+                `Personalziel speichern: HTTP ${response.status}`
+            );
+        }
+    }
+
+    async function personnelWritePhase(id, days) {
+        const numericId = Number(id);
+
+        if (
+            !Number.isSafeInteger(numericId) ||
+            numericId <= 0 ||
+            ![1, 2, 3].includes(days)
+        ) {
+            throw new Error(
+                'Ungültige Gebäude-ID oder Werbedauer'
+            );
+        }
+
+        // Spielinterne Aktion zum Start einer
+        // manuellen Personalwerbephase.
+        const response = await fetch(
+            `/buildings/${numericId}/hire_do/${days}`,
+            {
+                method: 'GET',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                redirect: 'follow'
+            }
+        );
+
+        if (
+            !response.ok ||
+            new URL(response.url)
+            .pathname.includes('sign_in')
+        ) {
+            throw new Error(
+                `Werbephase konnte nicht gestartet werden: ` +
+                `HTTP ${response.status}`
+        );
+        }
+    }
+
+    async function personnelWriteAuto(id) {
+        if (personnelPremium() !== true) {
+            throw Error('Premiumstatus nicht bestätigt');
+        }
+
+        const response = await fetch(
+            `/buildings/${encodeURIComponent(id)}/hire_do/automatic`,
+            {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                redirect: 'follow'
+            }
+        );
+
+        if (
+            !response.ok ||
+            new URL(response.url).pathname.includes('sign_in')
+        ) {
+            throw Error(
+                `Automatische Werbung: HTTP ${response.status}`
+            );
+        }
+    }
+
+
+    async function personnelConfirm() {
+        const plan = state.personnelPending;
+
+        if (
+            !plan ||
+            state.writing ||
+            state.loading ||
+            !['target', 'auto', 'phase'].includes(plan.action)
+        ) return;
+
+        if (
+            plan.action === 'auto' &&
+            personnelPremium() !== true
+        ) {
+            state.personnelPending = null;
+            state.personnelMessage =
+                'Premiumstatus nicht bestätigt.';
+            render();
+            return;
+        }
+
+        if (
+            plan.action === 'phase' &&
+            ![1, 2, 3].includes(plan.value)
+        ) {
+            state.personnelPending = null;
+            state.personnelMessage =
+                'Ungültige Werbedauer.';
+            render();
+            return;
+        }
+
+        state.personnelPending = null;
+        state.writing = true;
+        state.stopWrite = false;
+        state.writeLog = [];
+        state.personnelMessage = '';
+
+        let changed = 0;
+        let skipped = 0;
+        let failed = false;
+
+        render();
+
+        for (const id of plan.ids) {
+            if (state.stopWrite) break;
+
+            try {
+                const local =
+                      state.data.byBuilding.get(String(id));
+
+                if (!local) {
+                    throw new Error('Wache nicht gefunden');
+                }
+
+                if (!supportsPersonnel(local)) {
+                    throw new Error(
+                        'Dieser Gebäudetyp unterstützt keine ' +
+                        'Personalverwaltung. Aktion abgebrochen.'
+                    );
+                }
+
+                // Vor jedem Schreibzugriff den tatsächlichen
+                // Serverzustand kontrollieren.
+                const server = await personnelServerBuilding(id);
+
+                let skip = false;
+
+                if (plan.action === 'target') {
+                    const current = server.personal_count_target;
+
+                    if (
+                        current == null ||
+                        !Number.isFinite(Number(current))
+                    ) {
+                        throw new Error(
+                            'Personalziel nicht auslesbar'
+                        );
+                    }
+
+                    if (Number(current) === plan.value) {
+                        skip = true;
+                    } else {
+                        await personnelWriteTarget(
+                            id,
+                            plan.value
+                        );
+                    }
+
+                } else if (plan.action === 'auto') {
+                    if (
+                        typeof server.hiring_automatic !== 'boolean'
+                    ) {
+                        throw new Error(
+                            'Werbeautomatik nicht auslesbar'
+                        );
+                    }
+
+                    if (server.hiring_automatic === true) {
+                        skip = true;
+                    } else {
+                        if (
+                            !(Number(server.personal_count_target) > 0)
+                        ) {
+                            throw new Error(
+                                'Kein Personalziel konfiguriert'
+                            );
+                        }
+
+                        await personnelWriteAuto(id);
+                    }
+
+                } else if (plan.action === 'phase') {
+                    const current = Number(server.hiring_phase);
+
+                    if (
+                        server.hiring_phase == null ||
+                        !Number.isInteger(current) ||
+                        ![0, 1, 2, 3].includes(current) ||
+                        typeof server.hiring_automatic !== 'boolean'
+                    ) {
+                        throw new Error(
+                            'Werbezustand nicht eindeutig auslesbar'
+                        );
+                    }
+
+                    if (
+                        server.hiring_automatic === true ||
+                        current !== 0
+                    ) {
+                        // Automatische oder laufende manuelle
+                        // Werbung nicht überschreiben.
+                        skip = true;
+                    } else {
+                        await personnelWritePhase(
+                            id,
+                            plan.value
+                        );
+                    }
+                }
+
+                // Serverzustand erneut prüfen.
+                // Auch bei übersprungenen Datensätzen wird
+                // das lokale Modell aktualisiert.
+                let verified = false;
+                let confirmed = null;
+
+                for (let attempt = 0; attempt < 5; attempt++) {
+                    if (!skip) await sleep(450);
+
+                    const check =
+                          await personnelServerBuilding(id);
+
+                    let matches = false;
+
+                    if (plan.action === 'target') {
+                        matches =
+                            Number(check.personal_count_target) ===
+                            plan.value;
+
+                    } else if (plan.action === 'auto') {
+                        matches =
+                            check.hiring_automatic === true;
+
+                    } else {
+                        // Falls inzwischen eine andere Werbung
+                        // läuft, ist ein übersprungener Datensatz
+                        // ebenfalls ein gültiger Zustand.
+                        matches = skip ||
+                            (
+                            check.hiring_automatic === false &&
+                            Number(check.hiring_phase) ===
+                            plan.value
+                        );
+                    }
+
+                    if (matches) {
+                        verified = true;
+                        confirmed = check;
+                        break;
+                    }
+
+                    if (skip) break;
+                }
+
+                if (!verified) {
+                    throw new Error(
+                        'Server hat den Zielzustand ' +
+                        'nicht bestätigt'
+                    );
+                }
+
+                if (
+                    confirmed.personal_count_target != null &&
+                    Number.isFinite(
+                        Number(confirmed.personal_count_target)
+                    )
+                ) {
+                    local.personalTarget =
+                        Number(confirmed.personal_count_target);
+                }
+
+                if (
+                    typeof confirmed.hiring_automatic === 'boolean'
+                ) {
+                    local.hiringAutomatic =
+                        confirmed.hiring_automatic;
+                }
+
+                if (
+                    confirmed.hiring_phase != null &&
+                    Number.isInteger(
+                        Number(confirmed.hiring_phase)
+                    )
+                ) {
+                    local.hiringPhase =
+                        Number(confirmed.hiring_phase);
+                }
+
+                if (skip) {
+                    skipped++;
+                } else {
+                    changed++;
+                }
+
+                state.writeLog.push(
+                    `${skip ? 'ÜBERSPRUNGEN' : 'OK'}: ` +
+                    `${local.name} (${id})`
+            );
+
+            } catch (error) {
+                failed = true;
+                state.stopWrite = true;
+                state.writeNeedsRefresh = true;
+
+                state.writeLog.push(
+                    `FEHLER ${id}: ${error.message}`
+            );
+
+                console.error(
+                    '[LSS Personalverwaltung]',
+                    error
+                );
+
+            } finally {
+                progress(
+                    `Personal: ${fmt(changed)} geändert, ` +
+                    `${fmt(skipped)} übersprungen`
+            );
+
+                render();
+            }
+
+            if (!state.stopWrite) {
+                await sleep(ACTION_DELAY_MS);
+            }
+        }
+
+        state.writing = false;
+
+        state.personnelMessage = failed
+            ? 'Aktion bei einem Fehler angehalten. ' +
+            'Bitte Daten vollständig neu laden.'
+        : state.stopWrite
+            ? `${fmt(changed)} Änderungen durchgeführt; ` +
+            'Aktion abgebrochen.'
+        : `${fmt(changed)} erfolgreich geändert, ` +
+            `${fmt(skipped)} übersprungen.`;
+
+        render();
+    }
+
+
+    // ==========================================
     // HAUPTANSICHT
     // ==========================================
 
@@ -3411,9 +4418,22 @@ ${detailFilters('vehicle', statuses)}
         if (state.pending) {
             html += writeDialog();
         }
+        // Personalverwaltung
+        if (state.tab === 'personnel') {
+            html += personnelView();
+            html = html.replace(
+                '<div class="tablebox">',
+                '<div class="tablebox lssstat-personnel-table">'
+            );
 
-        // Gebäudetyp-Detailansicht
-        if (
+            // Gebäudetyp-Detailansicht
+        } else if (
+            state.tab === 'buildingtypes' &&
+            state.detail?.kind === 'building'
+        ) {
+            html += buildingTypeDetail();
+            // Gebäudetyp-Detailansicht
+        } else if (
             state.tab === 'buildingtypes' &&
             state.detail?.kind === 'building'
         ) {
@@ -3717,6 +4737,7 @@ ${detailFilters('vehicle', statuses)}
             // EINZELNE WACHEN
             // ======================================
 
+
             if (state.tab === 'stations') {
                 html += table(
                     [
@@ -3724,36 +4745,76 @@ ${detailFilters('vehicle', statuses)}
                         ['Gebäudetyp'],
                         ['Organisation'],
                         ['Fahrzeuge', true],
+                        ['Personal Ist / Soll', true],
+                        ['Personalwerbung'],
                         ['Zusammensetzung']
                     ],
 
-                    items.map(r => `
-           <tr>
-             <td>${hrefB(r)}</td>
+                    items.map(r => {
+                        const target =
+                              r.personalTarget === null ||
+                              !Number.isFinite(r.personalTarget)
+                        ? '—'
+                        : fmt(r.personalTarget);
 
-             <td>
-               ${esc(r.type)}
-               ${r.small ? ' (Kleinwache)' : ''}
-             </td>
+                        const hiring =
+                              r.hiringAutomatic === true
+                        ? 'Automatisch'
+                        : r.hiringAutomatic === false
+                        ? 'Manuell'
+                        : 'Unbekannt';
 
-             <td>${esc(r.org)}</td>
+                        const phase =
+                              r.hiringPhase !== null &&
+                              Number.isInteger(r.hiringPhase) &&
+                              r.hiringPhase >= 0 &&
+                              r.hiringPhase <= 3
+                        ? `Phase ${r.hiringPhase}`
+                    : 'Phase unbekannt';
 
-             <td class="num">
-               ${fmt(r.count)}
-             </td>
+                        return `
+                <tr>
+                    <td>${hrefB(r)}</td>
 
-             <td>
-               ${detailEntries(
-                        r.byType,
-                        'Fahrzeuge'
-                    )}
-             </td>
-           </tr>
-         `).join(''),
+                    <td>
+                        ${esc(r.type)}
+                        ${r.small
+                            ? ' (Kleinwache)'
+                        : ''}
+                    </td>
 
-                    ['28%', '22%', '16%', '12%', '22%']
+                    <td>${esc(r.org)}</td>
+
+                    <td class="num">
+                        ${fmt(r.count)}
+                    </td>
+
+                    <td class="num">
+                        ${fmt(r.personal)} / ${target}
+                    </td>
+
+                    <td>
+                        <div>${hiring}</div>
+                        <div class="muted"
+                            style="font-size:14px">
+                            ${phase}
+                        </div>
+                    </td>
+
+                    <td>
+                        ${detailEntries(
+                            r.byType,
+                            'Fahrzeuge'
+                        )}
+                    </td>
+                </tr>
+            `;
+                    }).join(''),
+
+                    ['19%','13%','9%','7%','13%','17%','22%']
                 );
             }
+
 
             // ======================================
             // LEITSTELLENBEREICHE
@@ -3822,6 +4883,121 @@ ${detailFilters('vehicle', statuses)}
     function bind() {
         const c = $('#lssstat-content');
 
+        // ==========================================
+        // PERSONALVERWALTUNG – INTERAKTIONEN
+        // ==========================================
+
+        for (const [selector, property] of [
+            ['#lssstat-personnel-center', 'personnelCenter'],
+            ['#lssstat-personnel-type', 'personnelType'],
+            ['#lssstat-personnel-filter', 'personnelFilter']
+        ]) {
+            c.querySelector(selector)
+                ?.addEventListener('change', event => {
+                state[property] = event.target.value;
+                state.page = 0;
+                state.personnelPending = null;
+                render();
+            });
+        }
+
+        c.querySelector('#lssstat-personnel-target')
+            ?.addEventListener('change', event => {
+            const value = Number(event.target.value);
+
+            if (!Number.isSafeInteger(value) || value <= 0) {
+                state.personnelMessage =
+                    'Personalziel muss eine positive ganze Zahl sein.';
+                render();
+                return;
+            }
+
+            state.personnelTarget = value;
+            state.personnelMessage = '';
+            state.personnelPending = null;
+            state.page = 0;
+            render();
+        });
+
+        // Gewünschte Werbedauer ändern
+        c.querySelector('#lssstat-personnel-phase')
+            ?.addEventListener('change', event => {
+            state.personnelPhase =
+                Number(event.target.value);
+
+            state.personnelPending = null;
+            render();
+        });
+
+        // Manuelle Werbephase für alle gefilterten
+        // geeigneten Wachen vorbereiten
+        c.querySelector('#lssstat-personnel-bulk-phase')
+            ?.addEventListener('click', () => {
+            personnelPrepare(
+                'phase',
+                personnelRows().map(s => s.id)
+            );
+        });
+
+        // Einzelne manuelle Werbephase starten
+        c.querySelectorAll('[data-person-phase]')
+            .forEach(button => {
+            button.onclick = () => {
+                personnelPrepare(
+                    'phase',
+                    [button.dataset.personPhase]
+                );
+            };
+        });
+
+
+        c.querySelector('#lssstat-personnel-bulk-target')
+            ?.addEventListener('click', () => {
+            personnelPrepare(
+                'target',
+                personnelRows().map(s => s.id)
+            );
+        });
+
+        c.querySelector('#lssstat-personnel-bulk-auto')
+            ?.addEventListener('click', () => {
+            personnelPrepare(
+                'auto',
+                personnelRows().map(s => s.id)
+            );
+        });
+
+        // Einzelaktionen pro Wache
+        c.querySelectorAll('[data-person-target]')
+            .forEach(button => {
+            button.onclick = () => {
+                personnelPrepare(
+                    'target',
+                    [button.dataset.personTarget]
+                );
+            };
+        });
+
+        c.querySelectorAll('[data-person-auto]')
+            .forEach(button => {
+            button.onclick = () => {
+                personnelPrepare(
+                    'auto',
+                    [button.dataset.personAuto]
+                );
+            };
+        });
+
+        // Bestätigungsdialog
+        c.querySelector('#lssstat-personnel-confirm')
+            ?.addEventListener('click', personnelConfirm);
+
+        c.querySelector('#lssstat-personnel-cancel')
+            ?.addEventListener('click', () => {
+            state.personnelPending = null;
+            render();
+        });
+
         $('.tabs')
             .querySelectorAll('[data-tab]')
             .forEach(b => {
@@ -3830,6 +5006,7 @@ ${detailFilters('vehicle', statuses)}
                 state.detail = null;
                 state.pending = null;
                 state.buildingBulkPending = null;
+                state.personnelPending = null;
                 state.page = 0;
                 clearSearch();
                 render();
@@ -4327,7 +5504,12 @@ ${detailFilters('vehicle', statuses)}
     // Vor dem abschließenden render(); innerhalb der IIFE einfügen.
     // ==========================================================
 
-    const v24Filter = { station: 'all', center: 'all', own: 'all' };
+    const v24Filter = {
+        station: 'all',
+        stationCenter: 'all',
+        center: 'all',
+        own: 'all'
+    };
     let v24Busy = false;
     let v24NeedsReload = false;
     let v24Message = '';
@@ -4556,7 +5738,7 @@ ${detailFilters('vehicle', statuses)}
             throw Error(
                 `Speichern fehlgeschlagen: HTTP ${response.status}`
             );
-        }
+    }
     }
 
     async function v24ChangeBuilding(id, field, target) {
@@ -4646,7 +5828,7 @@ ${detailFilters('vehicle', statuses)}
             throw new Error(
                 `Unbekannte Gebäudeeinstellung: ${field}`
     );
-        }
+    }
 
 
         const confirmed = await v24Verify(async () => {
@@ -4861,32 +6043,47 @@ ${detailFilters('vehicle', statuses)}
     }
 
 
+
     function v24FilterUI(kind) {
         const element = document.createElement('div');
+
         element.className = 'toolbar';
         element.style.margin = '10px 0';
+
+        const statusOptions = [
+            ['all', 'Alle'],
+            ['active', 'Aktiv'],
+            ['inactive', 'Inaktiv']
+        ];
+
+        const centerOptions = [
+            ['all', 'Alle Leitstellenbereiche'],
+            ...state.data.centers
+            .slice()
+            .sort((a, b) =>
+                  a.name.localeCompare(b.name, 'de')
+                 )
+            .map(c => [c.id, c.name])
+        ];
 
         const entries = kind === 'stations'
         ? [
             [
+                'stationCenter',
+                'Leitstellenbereich',
+                centerOptions
+            ],
+            [
                 'station',
                 'Aktivstatus',
-                [
-                    ['all', 'Alle'],
-                    ['active', 'Aktiv'],
-                    ['inactive', 'Inaktiv']
-                ]
+                statusOptions
             ]
         ]
         : [
             [
                 'center',
                 'Aktivstatus',
-                [
-                    ['all', 'Alle'],
-                    ['active', 'Aktiv'],
-                    ['inactive', 'Inaktiv']
-                ]
+                statusOptions
             ],
             [
                 'own',
@@ -4908,10 +6105,7 @@ ${detailFilters('vehicle', statuses)}
             const select =
                   document.createElement('select');
 
-            select.setAttribute(
-                'aria-label',
-                label
-            );
+            select.setAttribute('aria-label', label);
 
             for (const [value, text] of options) {
                 const option =
@@ -4919,6 +6113,7 @@ ${detailFilters('vehicle', statuses)}
 
                 option.value = value;
                 option.textContent = text;
+
                 select.append(option);
             }
 
@@ -4926,6 +6121,7 @@ ${detailFilters('vehicle', statuses)}
 
             select.addEventListener('change', () => {
                 v24Filter[key] = select.value;
+
                 state.page = 0;
                 render();
             });
@@ -4936,6 +6132,7 @@ ${detailFilters('vehicle', statuses)}
 
         return element;
     }
+
 
     function v24Decorate() {
         const c = $('#lssstat-content');
@@ -5060,28 +6257,28 @@ ${detailFilters('vehicle', statuses)}
                             data-v24-id="${esc(id)}"
                             data-v24-label="${
                                 esc(vehicle.name)
-                }"
+            }"
                             data-v24-target="${
                                 fms === 6
-                }"
+            }"
                             ${
                                 disabled
-                        ? 'disabled' : ''
-                }
+                    ? 'disabled' : ''
+            }
                         >
                             ${
                                 fms === 2
-                        ? 'Auf S6'
-                    : 'Auf S2'
-                }
+                    ? 'Auf S6'
+                : 'Auf S2'
+            }
                         </button>
                     `;
-                } else {
-                    td.textContent =
-                        'Nicht schaltbar';
+            } else {
+                td.textContent =
+                    'Nicht schaltbar';
 
-                    td.className = 'muted';
-                }
+                td.className = 'muted';
+            }
 
                 tr.append(td);
             }
@@ -5099,6 +6296,10 @@ ${detailFilters('vehicle', statuses)}
                   c.querySelector('.tablebox table');
 
             if (!tableEl) return;
+            // Zusätzliche CSS-Klasse für die breite Wachenliste
+            if (state.tab === 'stations') {
+                tableEl.classList.add('lssstat-stations-table');
+            }
 
             tableEl.parentElement.before(
                 v24FilterUI(state.tab)
@@ -5128,7 +6329,7 @@ ${detailFilters('vehicle', statuses)}
 
             const widths = centers
             ? [25, 9, 9, 25, 16, 16]
-            : [23, 17, 13, 9, 22, 16];
+            : [19, 13, 9, 7, 13, 17, 11, 11];
 
             const cols =
                   tableEl.querySelectorAll(
@@ -5220,21 +6421,28 @@ ${detailFilters('vehicle', statuses)}
         let origStations;
         let origCenters;
 
-        if (
-            d &&
-            state.tab === 'stations'
-        ) {
+        if (d && state.tab === 'stations') {
             origStations = d.stations;
 
-            d.stations = origStations.filter(
-                s =>
-                v24Filter.station === 'all' ||
-                (
-                    v24Filter.station === 'active'
-                    ? s.enabled === true
-                    : s.enabled === false
-                )
-            );
+            d.stations = origStations.filter(s => {
+                const matchesStatus =
+                      v24Filter.station === 'all' ||
+                      (
+                          v24Filter.station === 'active'
+                          ? s.enabled === true
+                          : s.enabled === false
+                      );
+
+                const matchesCenter =
+                      v24Filter.stationCenter === 'all' ||
+                      s.center === v24Filter.stationCenter;
+
+                return (
+                    s.typeId !== '7' &&
+                    matchesStatus &&
+                    matchesCenter
+                );
+            });
 
         } else if (
             d &&
